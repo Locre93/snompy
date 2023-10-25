@@ -1,3 +1,4 @@
+import os, csv, scipy.io, re, struct
 import numpy as np
 
 from scipy.optimize import curve_fit
@@ -13,11 +14,68 @@ __authors__ = ["Lorenzo Orsini","Matteo Ceccanti"]
 
 # REFERENCES
 
+# TO DO
+# In plot an dsection FIX CHARACTER SIZE
+
 # ----------------------------------------------------------------------------------------------------- #
 #                                    Functions and class description                                    #
 # ----------------------------------------------------------------------------------------------------- #
 
 # ----------------------------------------------------------------------------------------------------- #
+
+def load_folder(root,i):
+	measurements = [os.listdir(root)[i] for i in range(len(os.listdir(root))) if not re.compile(r".*\.png").match(os.listdir(root)[i])]
+	return root + "\\" + measurements[i]
+
+def load_gsf(file_name):
+	with open(file_name,'rb') as gsf_file:
+		gsf_data = gsf_file.read()
+
+		i = 26
+		while gsf_data[i:i+1] != b'\n':
+			i = i + 1
+
+		X_res = int(re.findall(r'\d+', str(gsf_data[26:i]))[0])
+
+		i = i + 1
+		j = i
+
+		while gsf_data[i:i+1] != b'\n':
+			i = i + 1
+
+		Y_res = int(re.findall(r'\d+', str(gsf_data[j:i]))[0])
+
+		last = len(gsf_data)
+		first = last - X_res*Y_res*4
+
+		data = np.empty(int((last-first)/4))
+		i = 0
+		for value in struct.iter_unpack('f',gsf_data[first:last]):
+			data[i] = value[0]
+			i=i+1
+
+	return np.reshape(data,(Y_res,X_res))
+
+def load_dump(file_name):
+    with open(file_name,'rb') as dump_file:
+        dump_data = dump_file.read()
+
+    X_res = int(re.search(r'xres=(\d+)',str(dump_data)).group(1))
+    Y_res = int(re.search(r'yres=(\d+)',str(dump_data)).group(1))
+
+    X_span = float(re.search(r'xres=(\d+)',str(dump_data)).group(1))
+    Y_span = float(re.search(r'yres=(\d+)',str(dump_data)).group(1))
+
+    last = len(dump_data) - 3
+    first = last - X_res*Y_res*8 
+
+    data = np.empty(int((last-first)/8))
+    i = 0
+    for value in struct.iter_unpack('d',dump_data[first:last]):
+        data[i] = value[0]
+        i=i+1
+
+    return np.reshape(data,(Y_res,X_res))
 
 def save_scan(X,Y,Z,file_name):
 
@@ -125,7 +183,7 @@ def complex_fit(fitfun,x,y,**kwargs):
 
 	return poptBoth, pcovBoth
 
-def NewMap(Colors,N):
+def new_map(Colors,N):
 	MAP=np.zeros([np.sum(N),3])
 	column1=np.linspace(Colors[0,0],Colors[1,0],N[0]);
 
@@ -148,7 +206,7 @@ class snom():
 
 	# Notation: The wavenumber has to be the last integer number written in the name of the scan
 
-	def __init__(self,path):# ALLGND
+	def __init__(self,path):
 		self.path = path
 		self.folder = os.path.split(path)[-1]
 		self.date = re.findall(r'\d+-\d+-\d+',self.folder)
@@ -212,7 +270,7 @@ class snom():
 
 		# Default initialization
 		self.channel_name = 'O4'
-		self.map = load.gsf(self.path + "\\" + self.folder + " R-O4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O4P raw.gsf"))
+		self.map = load_gsf(self.path + "\\" + self.folder + " R-O4A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-O4P raw.gsf"))
 	
 		self.x = np.linspace(0,float(self.x_max),num=int(self.Nx))
 		self.y = np.linspace(float(self.y_min),float(self.y_max),num=int(self.Ny))
@@ -232,172 +290,172 @@ class snom():
 
 		if direction == "backward":
 			if channel_name == "O0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O0P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-O0A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-O0P raw.gsf"))
 
 			elif channel_name == "O1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O1P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-O1A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-O1P raw.gsf"))
 
 			elif channel_name == "O2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O2P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-O2A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-O2P raw.gsf"))
 
 			elif channel_name == "O3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O3P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-O3A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-O3P raw.gsf"))
 
 			elif channel_name == "O4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O4P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-O4A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-O4P raw.gsf"))
 
 			elif channel_name == "O5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O5P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-O5A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-O5P raw.gsf"))
 
 			elif channel_name == "M0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M0P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-M0A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-M0P raw.gsf"))
 
 			elif channel_name == "M1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M1P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-M1A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-M1P raw.gsf"))
 
 			elif channel_name == "M2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M2P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-M2A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-M2P raw.gsf"))
 
 			elif channel_name == "M3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M3P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-M3A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-M3P raw.gsf"))
 
 			elif channel_name == "M4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M4P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-M4A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-M4P raw.gsf"))
 
 			elif channel_name == "M5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M5P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-M5A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-M5P raw.gsf"))
 
 			elif channel_name == "A0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A0P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-A0A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-A0P raw.gsf"))
 
 			elif channel_name == "A1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A1P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-A1A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-A1P raw.gsf"))
 
 			elif channel_name == "A2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A2P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-A2A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-A2P raw.gsf"))
 
 			elif channel_name == "A3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A3P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-A3A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-A3P raw.gsf"))
 
 			elif channel_name == "A4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A4P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-A4A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-A4P raw.gsf"))
 
 			elif channel_name == "A5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A5P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-A5A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-A5P raw.gsf"))
 
 			elif channel_name == "B0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B0P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-B0A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-B0P raw.gsf"))
 
 			elif channel_name == "B1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B1P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-B1A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-B1P raw.gsf"))
 
 			elif channel_name == "B2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B2P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-B2A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-B2P raw.gsf"))
 
 			elif channel_name == "B3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B3P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-B3A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-B3P raw.gsf"))
 
 			elif channel_name == "B4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B4P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-B4A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-B4P raw.gsf"))
 
 			elif channel_name == "B5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B5P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-B5A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-B5P raw.gsf"))
 
 			elif channel_name == "Z":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-Z raw.gsf")
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-Z raw.gsf")
 
 			elif channel_name == "ZC":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-Z C.gsf")
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-Z C.gsf")
 
 			elif channel_name == "E":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-EA raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-EP raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-EA raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " R-EP raw.gsf"))
 
 			elif channel_name == "M":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M raw.gsf")
+				self.map = load_gsf(self.path + "\\" + self.folder + " R-M raw.gsf")
 		else:
 			if channel_name == "O0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O0P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " O0A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " O0P raw.gsf"))
 
 			elif channel_name == "O1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O1P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " O1A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " O1P raw.gsf"))
 
 			elif channel_name == "O2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O2P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " O2A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " O2P raw.gsf"))
 
 			elif channel_name == "O3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O3P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " O3A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " O3P raw.gsf"))
 
 			elif channel_name == "O4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O4P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " O4A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " O4P raw.gsf"))
 
 			elif channel_name == "O5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O5P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " O5A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " O5P raw.gsf"))
 
 			elif channel_name == "M0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M0P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " M0A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " M0P raw.gsf"))
 
 			elif channel_name == "M1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M1P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " M1A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " M1P raw.gsf"))
 
 			elif channel_name == "M2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M2P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " M2A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " M2P raw.gsf"))
 
 			elif channel_name == "M3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M3P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " M3A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " M3P raw.gsf"))
 
 			elif channel_name == "M4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M4P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " M4A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " M4P raw.gsf"))
 
 			elif channel_name == "M5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M5P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " M5A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " M5P raw.gsf"))
 
 			elif channel_name == "A0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A0P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " A0A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " A0P raw.gsf"))
 
 			elif channel_name == "A1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A1P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " A1A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " A1P raw.gsf"))
 
 			elif channel_name == "A2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A2P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " A2A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " A2P raw.gsf"))
 
 			elif channel_name == "A3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A3P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " A3A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " A3P raw.gsf"))
 
 			elif channel_name == "A4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A4P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " A4A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " A4P raw.gsf"))
 
 			elif channel_name == "A5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A5P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " A5A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " A5P raw.gsf"))
 
 			elif channel_name == "B0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B0P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " B0A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " B0P raw.gsf"))
 
 			elif channel_name == "B1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B1P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " B1A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " B1P raw.gsf"))
 
 			elif channel_name == "B2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B2P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " B2A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " B2P raw.gsf"))
 
 			elif channel_name == "B3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B3P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " B3A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " B3P raw.gsf"))
 
 			elif channel_name == "B4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B4P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " B4A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " B4P raw.gsf"))
 
 			elif channel_name == "B5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B5P raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " B5A raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " B5P raw.gsf"))
 
 			elif channel_name == "Z":
-				self.map = load.gsf(self.path + "\\" + self.folder + " Z raw.gsf")
+				self.map = load_gsf(self.path + "\\" + self.folder + " Z raw.gsf")
 
 			elif channel_name == "ZC":
-				self.map = load.gsf(self.path + "\\" + self.folder + " Z C.gsf")
+				self.map = load_gsf(self.path + "\\" + self.folder + " Z C.gsf")
 
 			elif channel_name == "E":
-				self.map = load.gsf(self.path + "\\" + self.folder + " EA raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " EP raw.gsf"))
+				self.map = load_gsf(self.path + "\\" + self.folder + " EA raw.gsf")*np.exp(1j*load_gsf(self.path + "\\" + self.folder + " EP raw.gsf"))
 
 			elif channel_name == "M":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M raw.gsf")
+				self.map = load_gsf(self.path + "\\" + self.folder + " M raw.gsf")
 
 		self.x = np.linspace(0,float(self.x_max),num=int(self.Nx))
 		self.y = np.linspace(float(self.y_min),float(self.y_max),num=int(self.Ny))
@@ -413,7 +471,7 @@ class snom():
 
 		return self 
 
-	def cut(self,x_range=[0,None],x_reset=True,y_range=[0,None],y_reset=False,):
+	def cut(self,x_range=[0,None],x_reset=True,y_range=[0,None],y_reset=False):
 
 		self.map = self.map[y_range[0]:y_range[1],x_range[0]:x_range[1]]
 
@@ -441,7 +499,7 @@ class snom():
 
 		return self
 
-	def plot(self,fun='abs',cres=200,cmap='viridis',vmin=None,vmax=None,xlim=None,ylim=None,figsize=(8,6),save=False,show=True,pixel=False):#FIX CHARACTER SIZE
+	def plot(self,fun='abs',cres=200,cmap='viridis',vmin=None,vmax=None,xlim=None,ylim=None,figsize=(8,6),save=False,show=True,pixel=False):
 		
 		if pixel:
 
@@ -946,4 +1004,20 @@ if __name__ == '__main__':
 
 	import matplotlib.pyplot as plt
 
-	test_root = "~\\data"
+	root = "Y:\\Lorenzo\\SSH 03"
+
+	scan_01 = snom(load_folder(root,0))
+	scan_01.channel("O3").cut(y_range=[0,80],y_reset=True).normalize(pixel=10).filter_std(threshold = 0.2).plot(cmap="hot",pixel=False)
+
+	scan_02 = snom(load_folder(root,1))
+	scan_02.channel("O3").drift_corr([(23,0),(22,11),(20,62),(18,98)]).normalize(pixel=10).filter_std(threshold = 0.2).plot(cmap="hot",pixel=False)
+
+	scan_03 = snom(load_folder(root,1))
+	scan_03.channel("Z").drift_corr([(23,0),(22,11),(20,62),(18,98)]).section(pixel=40,direction="Horizontal",plot=True)
+
+	scan_04 = snom(load_folder(root,2))
+	scan_04.channel("O3").drift_corr([(38,0),(47,43)]).normalize(pixel=10).filter_std(threshold = 0.06).plot(pixel=False,cmap="hot",fun="imag")
+	scan_04.section(pixel=18,direction="Horizontal",plot=True)
+
+	scan_05 = snom(load_folder(root,4))
+	scan_05.channel("O3").drift_corr([(104,0),(29,72)]).normalize(pixel=10).filter_std(threshold = 0.2485036523298142).plot(pixel=False,cmap="hot",fun="imag")
