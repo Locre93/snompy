@@ -1004,20 +1004,3 @@ if __name__ == '__main__':
 
 	import matplotlib.pyplot as plt
 
-	root = "Y:\\Lorenzo\\SSH 03"
-
-	scan_01 = snom(load_folder(root,0))
-	scan_01.channel("O3").cut(y_range=[0,80],y_reset=True).normalize(pixel=10).filter_std(threshold = 0.2).plot(cmap="hot",pixel=False)
-
-	scan_02 = snom(load_folder(root,1))
-	scan_02.channel("O3").drift_corr([(23,0),(22,11),(20,62),(18,98)]).normalize(pixel=10).filter_std(threshold = 0.2).plot(cmap="hot",pixel=False)
-
-	scan_03 = snom(load_folder(root,1))
-	scan_03.channel("Z").drift_corr([(23,0),(22,11),(20,62),(18,98)]).section(pixel=40,direction="Horizontal",plot=True)
-
-	scan_04 = snom(load_folder(root,2))
-	scan_04.channel("O3").drift_corr([(38,0),(47,43)]).normalize(pixel=10).filter_std(threshold = 0.06).plot(pixel=False,cmap="hot",fun="imag")
-	scan_04.section(pixel=18,direction="Horizontal",plot=True)
-
-	scan_05 = snom(load_folder(root,4))
-	scan_05.channel("O3").drift_corr([(104,0),(29,72)]).normalize(pixel=10).filter_std(threshold = 0.2485036523298142).plot(pixel=False,cmap="hot",fun="imag")
