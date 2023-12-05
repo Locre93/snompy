@@ -1,10 +1,9 @@
-import os, csv, scipy.io, re, struct
-import numpy as np
-
+from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 from scipy.optimize import curve_fit
 
+import os, csv, scipy.io, re, struct, h5py
 import matplotlib.pyplot as plt
-from matplotlib.colors import ListedColormap, LinearSegmentedColormap
+import numpy as np
 
 __version__ = "0.1.0"
 __authors__ = ["Lorenzo Orsini","Matteo Ceccanti"]
@@ -13,9 +12,6 @@ __authors__ = ["Lorenzo Orsini","Matteo Ceccanti"]
 # The variable k is the light wavenumber (1/λ) in cm⁻¹
 
 # REFERENCES
-
-# TO DO
-# In plot an dsection FIX CHARACTER SIZE
 
 # ----------------------------------------------------------------------------------------------------- #
 #                                    Functions and class description                                    #
@@ -77,21 +73,41 @@ def load_dump(file_name):
 
     return np.reshape(data,(Y_res,X_res))
 
+def load_scan(file_name):
+
+	with open(file_name+'.npy', 'rb') as file:
+		X = np.load(file)
+		Y = np.load(file)
+		Z = np.load(file)
+
+	return X,Y,Z
+
+def load_scan_HDF5(file_name):
+
+	file = h5py.File(file_name + ".hdf5", "r")
+
+	X = file.get("x")[:]
+	Y = file.get("y")[:]
+	Z = file.get("map")[:]
+
+	file.close()
+
+	return X,Y,Z
+
 def save_scan(X,Y,Z,file_name):
 
-	with open(file_name+'.npy', 'wb') as file:
+	with open(file_name + '.npy', 'wb') as file:
 		np.save(file,X)
 		np.save(file,Y)
 		np.save(file,Z)
 
-def load_scan(file_name):
+def save_scan_HDF5(X,Y,Z,file_name):
 
-	with open(file_name+'.npy', 'rb') as File:
-		X = np.load(File)
-		Y = np.load(File)
-		Z = np.load(File)
-
-	return X,Y,Z
+	file = h5py.File(file_name + ".hdf5", "w")
+	file.create_dataset("x",data=X)
+	file.create_dataset("y",data=Y)
+	file.create_dataset("map",data=Z)
+	file.close()
 
 def find_x(y,p1,p2):
 
@@ -1001,6 +1017,4 @@ class snom():
 # --------------------------------------------- TEST CODE --------------------------------------------- #
 
 if __name__ == '__main__':
-
-	import matplotlib.pyplot as plt
-
+	pass
