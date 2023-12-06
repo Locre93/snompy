@@ -125,7 +125,7 @@ def complex_fit(fitfun,x,y,**kwargs):
 	d_real=np.real(y)
 	d_imag=np.imag(y)
 	yBoth = np.hstack([d_real, d_imag])
-	print(fitfun.__code__.co_argcount)
+	# print(fitfun.__code__.co_argcount)
 	n_el=fitfun.__code__.co_argcount-1
 
 	if n_el==1:
