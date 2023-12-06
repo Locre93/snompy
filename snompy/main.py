@@ -216,6 +216,9 @@ def new_map(Colors,N):
 	MAP[:,2]=column3/255
 	return ListedColormap(CMAP);
 
+def Lorentz(k,BG1,BG2,kT,epsIx,Gx):
+	return BG1+1j*BG2 + epsIx/(kT**2 - k**2 - 1j*k*Gx)
+
 # --------------------------------------------- CLASS SNOM -------------------------------------------- #
 
 class snom():
