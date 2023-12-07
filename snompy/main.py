@@ -221,6 +221,9 @@ def Lorentz(k,BG1,BG2,kT,epsIx,Gx):
 def Gauss(x,A,B,mu,sigma):
 	return A*np.exp(-0.5*np.abs((x-mu)/sigma)**2) + B
 
+def Fringes(x,A,B,q,k,phi):
+	return A*np.sin(2*q*x + phi)*np.exp(-2*k*x)/(np.sqrt(x)) + B*np.sin(q*x + phi)*np.exp(-k*x)/(np.sqrt(x**3))
+
 # --------------------------------------------- CLASS SNOM -------------------------------------------- #
 
 class snom():
