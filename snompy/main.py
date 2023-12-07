@@ -125,7 +125,6 @@ def complex_fit(fitfun,x,y,**kwargs):
 	d_real=np.real(y)
 	d_imag=np.imag(y)
 	yBoth = np.hstack([d_real, d_imag])
-	# print(fitfun.__code__.co_argcount)
 	n_el=fitfun.__code__.co_argcount-1
 
 	if n_el==1:
@@ -218,6 +217,9 @@ def new_map(Colors,N):
 
 def Lorentz(k,BG1,BG2,kT,epsIx,Gx):
 	return BG1+1j*BG2 + epsIx/(kT**2 - k**2 - 1j*k*Gx)
+
+def Gauss(x,A,B,mu,sigma):
+	return A*np.exp(-0.5*np.abs((x-mu)/sigma)**2) + B
 
 # --------------------------------------------- CLASS SNOM -------------------------------------------- #
 
