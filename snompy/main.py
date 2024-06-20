@@ -5,7 +5,7 @@ import os, csv, scipy.io, re, struct, h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __authors__ = ["Lorenzo Orsini","Matteo Ceccanti"]
 
 # NOTES
@@ -916,7 +916,7 @@ class snom():
 
 		return self
 
-	def section(self,pixel,direction='Vertical',fun='abs',figsize=(8,6),xlim=None,ylim=None,plot=False,save=False,show=True,plot_type="plot"):
+	def section(self,pixel,direction='Vertical',fun='abs',figsize=(8,6),xlim=None,ylim=None,plot=False,save=False,show=True,plot_type="plot",s=25):
 
 		if direction == 'Vertical':
 			self.sections.append([self.y,self.map[:,pixel][:]])
@@ -966,13 +966,53 @@ class snom():
 					self.plot_flag = True
 
 				if fun == 'abs':
-					self.fig = plt.scatter(self.sections[-1][0],np.abs(self.sections[-1][1]))
+					self.fig = plt.scatter(self.sections[-1][0],np.abs(self.sections[-1][1]),s=s)
 				elif fun == 'phase':
-					self.fig = plt.scatter(self.sections[-1][0],np.angle(self.sections[-1][1]))
+					self.fig = plt.scatter(self.sections[-1][0],np.angle(self.sections[-1][1]),s=s)
 				elif fun == 'real':
-					self.fig = plt.scatter(self.sections[-1][0],np.real(self.sections[-1][1]))
+					self.fig = plt.scatter(self.sections[-1][0],np.real(self.sections[-1][1]),s=s)
 				elif fun == 'imag':
-					self.fig = plt.scatter(self.sections[-1][0],np.imag(self.sections[-1][1]))
+					self.fig = plt.scatter(self.sections[-1][0],np.imag(self.sections[-1][1]),s=s)
+
+				if direction == 'Vertical':
+					if self.type == "Spatial":
+						self.fig = plt.xlabel('Y, μm',fontsize=18)
+					elif self.type == "Voltage Sweep":
+						self.fig = plt.xlabel('Voltage, V',fontsize=18)
+					elif self.type == "Frequency Sweep":
+						self.fig = plt.xlabel('Wavenumber, cm⁻¹',fontsize=18)
+
+				elif direction == 'Horizontal':
+					if self.fft_flag:
+						self.fig = plt.xlabel('Q, x10⁴ cm⁻¹',fontsize=18)	# Check the units
+					else:
+						self.fig = plt.xlabel('X, μm',fontsize=18)
+
+				self.fig = plt.tick_params(axis='both',which='major',labelsize=16)
+				self.fig = plt.tick_params(axis='both',which='minor',labelsize=16)
+				self.fig = plt.xlim(xlim)
+				self.fig = plt.ylim(ylim)
+
+				self.fig = plt.ylabel(self.channel_name + "  " + fun,fontsize=18)
+
+			elif plot_type == 'plot_and_scatter':
+
+				if not self.plot_flag:
+					self.fig = plt.figure(figsize=figsize)
+					self.plot_flag = True
+
+				if fun == 'abs':
+					self.fig = plt.scatter(self.sections[-1][0],np.abs(self.sections[-1][1]),s=s)
+					self.fig = plt.plot(self.sections[-1][0],np.abs(self.sections[-1][1]))
+				elif fun == 'phase':
+					self.fig = plt.scatter(self.sections[-1][0],np.angle(self.sections[-1][1]),s=s)
+					self.fig = plt.plot(self.sections[-1][0],np.angle(self.sections[-1][1]))
+				elif fun == 'real':
+					self.fig = plt.scatter(self.sections[-1][0],np.real(self.sections[-1][1]),s=s)
+					self.fig = plt.plot(self.sections[-1][0],np.real(self.sections[-1][1]))
+				elif fun == 'imag':
+					self.fig = plt.scatter(self.sections[-1][0],np.imag(self.sections[-1][1]),s=s)
+					self.fig = plt.plot(self.sections[-1][0],np.imag(self.sections[-1][1]))
 
 				if direction == 'Vertical':
 					if self.type == "Spatial":
