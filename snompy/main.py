@@ -5,7 +5,7 @@ import os, csv, scipy.io, re, struct, h5py
 import matplotlib.pyplot as plt
 import numpy as np
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __authors__ = ["Lorenzo Orsini","Matteo Ceccanti"]
 
 # NOTES
@@ -523,7 +523,7 @@ class snom():
 
 		return self
 
-	def plot(self,fun='abs',cres=200,cmap='viridis',vmin=None,vmax=None,xlim=None,ylim=None,figsize=(8,6),save=False,show=True,pixel=False):
+	def plot(self,fun='abs',cres=200,cmap='viridis',vmin=None,vmax=None,xlim=None,ylim=None,figsize=(8,6),save=False,show=True,pixel=False,colorbar=True):
 		
 		if pixel:
 
@@ -607,11 +607,17 @@ class snom():
 					self.fig = plt.xlabel('Fast axis, pixel',fontsize=18)
 					self.fig = plt.ylabel('Slow axis, pixel',fontsize=18)
 
+					if colorbar:
+						plt.colorbar()
+
 				elif fun == 'phase':
 					self.fig = plt.figure(figsize=figsize)
 					self.fig = plt.contourf(self.adjust_phase(),cres,cmap=cmap,vmin=vmin,vmax=vmax)
 					self.fig = plt.xlabel('Fast axis, pixel',fontsize=18)
 					self.fig = plt.ylabel('Slow axis, pixel',fontsize=18)
+
+					if colorbar:
+						plt.colorbar()
 
 				elif fun == 'real':
 					self.fig = plt.figure(figsize=figsize)
@@ -619,11 +625,17 @@ class snom():
 					self.fig = plt.xlabel('Fast axis, pixel',fontsize=18)
 					self.fig = plt.ylabel('Slow axis, pixel',fontsize=18)
 
+					if colorbar:
+						plt.colorbar()
+
 				elif fun == 'imag':
 					self.fig = plt.figure(figsize=figsize)
 					self.fig = plt.contourf(np.imag(self.map),cres,cmap=cmap,vmin=vmin,vmax=vmax)
 					self.fig = plt.xlabel('Fast axis, pixel',fontsize=18)
 					self.fig = plt.ylabel('Slow axis, pixel',fontsize=18)
+
+					if colorbar:
+						plt.colorbar()
 
 				elif fun == 'all':
 					self.fig, self.axs = plt.subplots(2,2,figsize=(10,8))
@@ -738,15 +750,30 @@ class snom():
 				if fun == 'abs':
 					self.fig = plt.figure(figsize=figsize)
 					self.fig = plt.contourf(self.X,self.Y,np.abs(self.map),cres,cmap=cmap,vmin=vmin,vmax=vmax)
+
+					if colorbar:
+						plt.colorbar()
+
 				elif fun == 'phase':
 					self.fig = plt.figure(figsize=figsize)
 					self.fig = plt.contourf(self.X,self.Y,self.adjust_phase(),cres,cmap=cmap,vmin=vmin,vmax=vmax)
+
+					if colorbar:
+						plt.colorbar()
+
 				elif fun == 'real':
 					self.fig = plt.figure(figsize=figsize)
 					self.fig = plt.contourf(self.X,self.Y,np.real(self.map),cres,cmap=cmap,vmin=vmin,vmax=vmax)
+
+					if colorbar:
+						plt.colorbar()
+
 				elif fun == 'imag':
 					self.fig = plt.figure(figsize=figsize)
 					self.fig = plt.contourf(self.X,self.Y,np.imag(self.map),cres,cmap=cmap,vmin=vmin,vmax=vmax)
+
+					if colorbar:
+						plt.colorbar()			
 
 				elif fun == 'all':
 					self.fig, self.axs = plt.subplots(2,2,figsize=(10,8))
