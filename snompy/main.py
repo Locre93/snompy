@@ -230,8 +230,9 @@ class snom():
 
 	# Notation: The wavenumber has to be the last integer number written in the name of the scan
 
-	def __init__(self,path):
+	def __init__(self,path,flip=False):
 		self.path = path
+		self.flip = flip
 		self.folder = os.path.split(path)[-1]
 		self.date = re.findall(r'\d+-\d+-\d+',self.folder)
 
@@ -299,6 +300,10 @@ class snom():
 		self.x = np.linspace(0,float(self.x_max),num=int(self.Nx))
 		self.y = np.linspace(float(self.y_min),float(self.y_max),num=int(self.Ny))
 		self.X,self.Y = np.meshgrid(self.x,self.y)
+
+		if self.type != "Frequency Sweep":
+			if self.flip:
+				self.map = np.flip(self.map,0)
 
 		self.sections = []
 
@@ -484,6 +489,11 @@ class snom():
 		self.x = np.linspace(0,float(self.x_max),num=int(self.Nx))
 		self.y = np.linspace(float(self.y_min),float(self.y_max),num=int(self.Ny))
 		self.X,self.Y = np.meshgrid(self.x,self.y)
+
+
+		if self.type != "Frequency Sweep":
+			if self.flip:
+				self.map = np.flip(self.map,0)
 
 		self.sections = []
 
