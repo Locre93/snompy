@@ -153,7 +153,7 @@ class snom():
 		self.folder = os.path.split(path)[-1]
 		self.date = re.findall(r'\d+-\d+-\d+',self.folder)
 
-		with open(self.path + "\\" + self.folder + ".txt",'r') as txt_file:
+		with open(self.path + "\\" + self.folder + ".txt",'r', encoding="utf-8") as txt_file:
 			lines = txt_file.readlines()
 
 		self.x_max,self.y_max,_ = re.findall(r"[-+]?(?:\d*\.*\d+)",lines[7])
