@@ -1,12 +1,21 @@
+import os, re, struct
+
 import numpy as np
 
+from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import curve_fit
+from scipy.signal import find_peaks
+from scipy.signal import savgol_filter
+from scipy.ndimage import rotate
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 
-__version__ = "0.1.0"
-__authors__ = ["Lorenzo Orsini","Matteo Ceccanti"]
+from tkinter import Tk
+from tkinter.filedialog import asksaveasfilename
+
+__version__ = "1.0.0"
+__authors__ = ["Lorenzo Orsini","Elisa Mendels","Matteo Ceccanti", "Bianca Turini"]
 
 # NOTES
 # The variable k is the light wavenumber (1/λ) in cm⁻¹
@@ -17,23 +26,51 @@ __authors__ = ["Lorenzo Orsini","Matteo Ceccanti"]
 #                                    Functions and class description                                    #
 # ----------------------------------------------------------------------------------------------------- #
 
-# ----------------------------------------------------------------------------------------------------- #
+# ---------------------------------------------- LOADING ---------------------------------------------- #
 
-def save_scan(X,Y,Z,file_name):
+def load_gsf(file_name):
+	with open(file_name,'rb') as gsf_file:
+		gsf_data = gsf_file.read()
 
-	with open(file_name+'.npy', 'wb') as file:
-		np.save(file,X)
-		np.save(file,Y)
-		np.save(file,Z)
+		i = 26
+		while gsf_data[i:i+1] != b'\n':
+			i = i + 1
 
-def load_scan(file_name):
+		X_res = int(re.findall(r'\d+', str(gsf_data[26:i]))[0])
 
-	with open(file_name+'.npy', 'rb') as File:
-		X = np.load(File)
-		Y = np.load(File)
-		Z = np.load(File)
+		i = i + 1
+		j = i
 
-	return X,Y,Z
+		while gsf_data[i:i+1] != b'\n':
+			i = i + 1
+
+		Y_res = int(re.findall(r'\d+', str(gsf_data[j:i]))[0])
+
+		last = len(gsf_data)
+		first = last - X_res*Y_res*4
+
+		data = np.empty(int((last-first)/4))
+		i = 0
+		for value in struct.iter_unpack('f',gsf_data[first:last]):
+			data[i] = value[0]
+			i=i+1
+
+	return np.reshape(data,(Y_res,X_res))
+
+def load_folder(root, idx):
+    # List all entries
+    entries = os.listdir(root)
+    # Sort them alphabetically to match Finder/ls order
+    entries.sort()
+    # Keep only directories (ignore files, including .png)
+    measurements = [
+        entry for entry in entries
+        if os.path.isdir(os.path.join(root, entry)) and not re.search(r"\.png$", entry)
+    ]
+    # Return the idx-th folder
+    return os.path.join(root, measurements[idx])
+
+# ---------------------------------------------- ANALYSIS --------------------------------------------- #
 
 def find_x(y,p1,p2):
 
@@ -51,7 +88,6 @@ def complex_fit(fitfun,x,y,**kwargs):
 	d_real=np.real(y)
 	d_imag=np.imag(y)
 	yBoth = np.hstack([d_real, d_imag])
-	print(fitfun.__code__.co_argcount)
 	n_el=fitfun.__code__.co_argcount-1
 
 	if n_el==1:
@@ -125,22 +161,11 @@ def complex_fit(fitfun,x,y,**kwargs):
 
 	return poptBoth, pcovBoth
 
-def NewMap(Colors,N):
-	MAP=np.zeros([np.sum(N),3])
-	column1=np.linspace(Colors[0,0],Colors[1,0],N[0]);
+def Lorentz(k,BG1,BG2,kT,epsIx,Gx):
+	return BG1+1j*BG2 + epsIx/(kT**2 - k**2 - 1j*k*Gx)
 
-	column2=np.linspace(Colors[0,1],Colors[1,1],N[0]);
-	column3=np.linspace(Colors[0,2],Colors[1,2],N[0]);
-
-	for i in range(1,len(N)):
-		column1=np.concatenate((column1,np.linspace(Colors[i,0],Colors[i+1,0],N[i])));
-		column2=np.concatenate((column2,np.linspace(Colors[i,1],Colors[i+1,1],N[i])));
-		column3=np.concatenate((column3,np.linspace(Colors[i,2],Colors[i+1,2],N[i])));
-
-	MAP[:,0]=column1/255
-	MAP[:,1]=column2/255
-	MAP[:,2]=column3/255
-	return ListedColormap(CMAP);
+def Gauss(x,A,B,mu,sigma):
+	return A*np.exp(-0.5*np.abs((x-mu)/sigma)**2) + B
 
 # --------------------------------------------- CLASS SNOM -------------------------------------------- #
 
@@ -148,12 +173,13 @@ class snom():
 
 	# Notation: The wavenumber has to be the last integer number written in the name of the scan
 
-	def __init__(self,path):# ALLGND
+	def __init__(self,path,flip=False):
 		self.path = path
+		self.flip = flip
 		self.folder = os.path.split(path)[-1]
 		self.date = re.findall(r'\d+-\d+-\d+',self.folder)
 
-		with open(self.path + "\\" + self.folder + ".txt",'r', encoding="utf-8") as txt_file:
+		with open(os.path.join(self.path, self.folder + ".txt"),'r', encoding="utf-8") as txt_file:
 			lines = txt_file.readlines()
 
 		self.x_max,self.y_max,_ = re.findall(r"[-+]?(?:\d*\.*\d+)",lines[7])
@@ -212,11 +238,15 @@ class snom():
 
 		# Default initialization
 		self.channel_name = 'O4'
-		self.map = load.gsf(self.path + "\\" + self.folder + " R-O4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O4P raw.gsf"))
+		self.map = load_gsf(os.path.join(self.path, self.folder + " R-O4A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-O4P raw.gsf")))
 	
 		self.x = np.linspace(0,float(self.x_max),num=int(self.Nx))
 		self.y = np.linspace(float(self.y_min),float(self.y_max),num=int(self.Ny))
 		self.X,self.Y = np.meshgrid(self.x,self.y)
+
+		if self.type != "Frequency Sweep":
+			if self.flip:
+				self.map = np.flip(self.map,0)
 
 		self.sections = []
 
@@ -232,176 +262,180 @@ class snom():
 
 		if direction == "backward":
 			if channel_name == "O0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O0P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-O0A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-O0P raw.gsf")))
 
 			elif channel_name == "O1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O1P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-O1A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-O1P raw.gsf")))
 
 			elif channel_name == "O2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O2P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-O2A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-O2P raw.gsf")))
 
 			elif channel_name == "O3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O3P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-O3A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-O3P raw.gsf")))
 
 			elif channel_name == "O4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O4P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-O4A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-O4P raw.gsf")))
 
 			elif channel_name == "O5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-O5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-O5P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-O5A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-O5P raw.gsf")))
 
 			elif channel_name == "M0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M0P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-M0A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-M0P raw.gsf")))
 
 			elif channel_name == "M1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M1P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-M1A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-M1P raw.gsf")))
 
 			elif channel_name == "M2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M2P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-M2A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-M2P raw.gsf")))
 
 			elif channel_name == "M3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M3P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-M3A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-M3P raw.gsf")))
 
 			elif channel_name == "M4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M4P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-M4A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-M4P raw.gsf")))
 
 			elif channel_name == "M5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-M5P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-M5A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-M5P raw.gsf")))
 
 			elif channel_name == "A0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A0P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-A0A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-A0P raw.gsf")))
 
 			elif channel_name == "A1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A1P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-A1A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-A1P raw.gsf")))
 
 			elif channel_name == "A2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A2P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-A2A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-A2P raw.gsf")))
 
 			elif channel_name == "A3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A3P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-A3A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-A3P raw.gsf")))
 
 			elif channel_name == "A4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A4P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-A4A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-A4P raw.gsf")))
 
 			elif channel_name == "A5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-A5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-A5P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-A5A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-A5P raw.gsf")))
 
 			elif channel_name == "B0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B0P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-B0A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-B0P raw.gsf")))
 
 			elif channel_name == "B1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B1P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-B1A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-B1P raw.gsf")))
 
 			elif channel_name == "B2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B2P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-B2A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-B2P raw.gsf")))
 
 			elif channel_name == "B3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B3P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-B3A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-B3P raw.gsf")))
 
 			elif channel_name == "B4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B4P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-B4A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-B4P raw.gsf")))
 
 			elif channel_name == "B5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-B5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-B5P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-B5A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-B5P raw.gsf")))
 
 			elif channel_name == "Z":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-Z raw.gsf")
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-Z raw.gsf"))
 
 			elif channel_name == "ZC":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-Z C.gsf")
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-Z C.gsf"))
 
 			elif channel_name == "E":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-EA raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " R-EP raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-EA raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " R-EP raw.gsf")))
 
 			elif channel_name == "M":
-				self.map = load.gsf(self.path + "\\" + self.folder + " R-M raw.gsf")
+				self.map = load_gsf(os.path.join(self.path, self.folder + " R-M raw.gsf"))
 		else:
 			if channel_name == "O0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O0P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " O0A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " O0P raw.gsf")))
 
 			elif channel_name == "O1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O1P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " O1A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " O1P raw.gsf")))
 
 			elif channel_name == "O2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O2P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " O2A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " O2P raw.gsf")))
 
 			elif channel_name == "O3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O3P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " O3A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " O3P raw.gsf")))
 
 			elif channel_name == "O4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O4P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " O4A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " O4P raw.gsf")))
 
 			elif channel_name == "O5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " O5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " O5P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " O5A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " O5P raw.gsf")))
 
 			elif channel_name == "M0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M0P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " M0A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " M0P raw.gsf")))
 
 			elif channel_name == "M1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M1P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " M1A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " M1P raw.gsf")))
 
 			elif channel_name == "M2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M2P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " M2A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " M2P raw.gsf")))
 
 			elif channel_name == "M3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M3P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " M3A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " M3P raw.gsf")))
 
 			elif channel_name == "M4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M4P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " M4A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " M4P raw.gsf")))
 
 			elif channel_name == "M5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " M5P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " M5A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " M5P raw.gsf")))
 
 			elif channel_name == "A0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A0P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " A0A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " A0P raw.gsf")))
 
 			elif channel_name == "A1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A1P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " A1A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " A1P raw.gsf")))
 
 			elif channel_name == "A2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A2P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " A2A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " A2P raw.gsf")))
 
 			elif channel_name == "A3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A3P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " A3A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " A3P raw.gsf")))
 
 			elif channel_name == "A4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A4P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " A4A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " A4P raw.gsf")))
 
 			elif channel_name == "A5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " A5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " A5P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " A5A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " A5P raw.gsf")))
 
 			elif channel_name == "B0":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B0A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B0P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " B0A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " B0P raw.gsf")))
 
 			elif channel_name == "B1":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B1A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B1P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " B1A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " B1P raw.gsf")))
 
 			elif channel_name == "B2":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B2A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B2P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " B2A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " B2P raw.gsf")))
 
 			elif channel_name == "B3":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B3A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B3P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " B3A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " B3P raw.gsf")))
 
 			elif channel_name == "B4":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B4A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B4P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " B4A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " B4P raw.gsf")))
 
 			elif channel_name == "B5":
-				self.map = load.gsf(self.path + "\\" + self.folder + " B5A raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " B5P raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " B5A raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " B5P raw.gsf")))
 
 			elif channel_name == "Z":
-				self.map = load.gsf(self.path + "\\" + self.folder + " Z raw.gsf")
+				self.map = load_gsf(os.path.join(self.path, self.folder + " Z raw.gsf"))
 
 			elif channel_name == "ZC":
-				self.map = load.gsf(self.path + "\\" + self.folder + " Z C.gsf")
+				self.map = load_gsf(os.path.join(self.path, self.folder + " Z C.gsf"))
 
 			elif channel_name == "E":
-				self.map = load.gsf(self.path + "\\" + self.folder + " EA raw.gsf")*np.exp(1j*load.gsf(self.path + "\\" + self.folder + " EP raw.gsf"))
+				self.map = load_gsf(os.path.join(self.path, self.folder + " EA raw.gsf"))*np.exp(1j*load_gsf(os.path.join(self.path, self.folder + " EP raw.gsf")))
 
 			elif channel_name == "M":
-				self.map = load.gsf(self.path + "\\" + self.folder + " M raw.gsf")
+				self.map = load_gsf(os.path.join(self.path, self.folder + " M raw.gsf"))
 
 		self.x = np.linspace(0,float(self.x_max),num=int(self.Nx))
 		self.y = np.linspace(float(self.y_min),float(self.y_max),num=int(self.Ny))
 		self.X,self.Y = np.meshgrid(self.x,self.y)
+
+		if self.type != "Frequency Sweep":
+			if self.flip:
+				self.map = np.flip(self.map,0)
 
 		self.sections = []
 
@@ -413,36 +447,37 @@ class snom():
 
 		return self 
 
-	def cut(self,x_range=[0,None],x_reset=True,y_range=[0,None],y_reset=False,):
+	def cut(self, x_range=None, x_reset=True, y_range=None, y_reset=False):
+		# Default ranges: full extent
+		if x_range is None:
+			x_range = (0, None)
+		if y_range is None:
+			y_range = (0, None)
 
-		self.map = self.map[y_range[0]:y_range[1],x_range[0]:x_range[1]]
+		xslice = slice(x_range[0], x_range[1])
+		yslice = slice(y_range[0], y_range[1])
 
-		self.X = self.X[y_range[0]:y_range[1],x_range[0]:x_range[1]]
-		self.Y = self.Y[y_range[0]:y_range[1],x_range[0]:x_range[1]]
+		# Cut arrays
+		self.map = self.map[yslice, xslice]
+		self.X   = self.X[yslice, xslice]
+		self.Y   = self.Y[yslice, xslice]
 
-		if x_reset and y_reset:
-			self.X = self.X - self.x[x_range[0]]
-			self.Y = self.Y - self.y[y_range[0]]
+		# Update coordinates
+		self.x = self.x[xslice]
+		self.y = self.y[yslice]
 
-			self.x = self.x[x_range[0]:x_range[1]] - self.x[x_range[0]]
-			self.y = self.y[y_range[0]:y_range[1]] - self.y[y_range[0]]
+		if x_reset:
+			self.X = self.X - self.x[0]
+			self.x = self.x - self.x[0]
 
-		elif x_reset and not(y_reset):
-			self.X = self.X - self.x[x_range[0]]
-			self.x = self.x[x_range[0]:x_range[1]] - self.x[x_range[0]]
-
-		elif not(x_reset) and y_reset:
-			self.Y = self.Y - self.y[y_range[0]]
-			self.y = self.y[y_range[0]:y_range[1]] - self.y[y_range[0]]
-
-		else:
-			self.x = self.x[x_range[0]:x_range[1]]
-			self.y = self.y[y_range[0]:y_range[1]]
+		if y_reset:
+			self.Y = self.Y - self.y[0]
+			self.y = self.y - self.y[0]
 
 		return self
 
-	def plot(self,fun='abs',cres=200,cmap='viridis',vmin=None,vmax=None,xlim=None,ylim=None,figsize=(8,6),save=False,show=True,pixel=False):#FIX CHARACTER SIZE
-		
+	def plot(self,fun='abs',cres=200,cmap='viridis',vmin=None,vmax=None,xlim=None,ylim=None,figsize=(8,6),save=False,show=True,pixel=False,colorbar=True, savedir = "Figures", data_type = ""):
+			
 		if pixel:
 
 			if type(fun) is list:
@@ -722,9 +757,37 @@ class snom():
 						self.fig = plt.xlabel('X, μm',fontsize=18)
 
 		if save:
-			Tk().withdraw()
-			file_name = asksaveasfilename(filetypes=[("Portable Network Graphic", ".png")], defaultextension=".png")
-			self.fig = plt.savefig(file_name,dpi=192,transparent=True,bbox_inches='tight')
+			# Extract the folder name
+			folder_name = os.path.basename(os.path.normpath(self.path))
+
+			# Split into tokens
+			tokens = folder_name.split()
+
+			# First token = date (YYYY-MM-DD)
+			date = tokens[0]
+
+			# Second token = measurement number (skip it)
+			# Remaining tokens = user-chosen description
+			description_tokens = tokens[2:] if len(tokens) > 2 else []
+
+			# Join description with underscores
+			description = "_".join(description_tokens)
+
+			# Clean description (remove unwanted characters)
+			description = re.sub(r'[^A-Za-z0-9_-]+', '_', description)
+
+			# Build filename
+			file_name = f"{date}_{description}_{self.channel_name}_{data_type}.png"
+
+			# Full path
+			file_path = os.path.join(savedir, file_name)
+
+			# Ensure directory exists
+			os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+			# Save figure
+			self.fig = plt.savefig(file_path, dpi=300, transparent=True, bbox_inches='tight')
+			print(f"Plot saved as: {file_path}")
 
 		if show:
 			self.fig = plt.show()
@@ -807,7 +870,7 @@ class snom():
 
 		return self
 
-	def section(self,pixel,direction='Vertical',fun='abs',figsize=(8,6),xlim=None,ylim=None,plot=False,save=False,show=True,plot_type="plot"):
+	def section(self,pixel,direction='Vertical',fun='abs',figsize=(8,6),xlim=None,ylim=None,plot=False,save=False,show=True,plot_type="plot",s=25):
 
 		if direction == 'Vertical':
 			self.sections.append([self.y,self.map[:,pixel][:]])
@@ -822,6 +885,7 @@ class snom():
 
 				if fun == 'abs':
 					self.fig = plt.plot(self.sections[-1][0],np.abs(self.sections[-1][1]))
+					print(self.sections[-1][0],np.abs(self.sections[-1][1]))
 				elif fun == 'phase':
 					self.fig = plt.plot(self.sections[-1][0],np.angle(self.sections[-1][1]))
 				elif fun == 'real':
@@ -831,17 +895,17 @@ class snom():
 
 				if direction == 'Vertical':
 					if self.type == "Spatial":
-						self.fig = plt.xlabel('Y, μm',fontsize=18)
+						self.fig = plt.xlabel(r'Y  ($\mu$m)',fontsize=18)
 					elif self.type == "Voltage Sweep":
 						self.fig = plt.xlabel('Voltage, V',fontsize=18)
 					elif self.type == "Frequency Sweep":
-						self.fig = plt.xlabel('Wavenumber, cm⁻¹',fontsize=18)
+						self.fig = plt.xlabel(r'Wavenumber  (cm$^{-1})$',fontsize=18)
 
 				elif direction == 'Horizontal':
 					if self.fft_flag:
-						self.fig = plt.xlabel('Q, x10⁴ cm⁻¹',fontsize=18)	# Check the units
+						self.fig = plt.xlabel(r'q, $\times 10^4$  (cm$^{-1})$',fontsize=18)	# Check the units
 					else:
-						self.fig = plt.xlabel('X, μm',fontsize=18)
+						self.fig = plt.xlabel(r'X  ($\mu$m)',fontsize=18)
 
 				self.fig = plt.tick_params(axis='both',which='major',labelsize=16)
 				self.fig = plt.tick_params(axis='both',which='minor',labelsize=16)
@@ -857,27 +921,67 @@ class snom():
 					self.plot_flag = True
 
 				if fun == 'abs':
-					self.fig = plt.scatter(self.sections[-1][0],np.abs(self.sections[-1][1]))
+					self.fig = plt.scatter(self.sections[-1][0],np.abs(self.sections[-1][1]),s=s)
 				elif fun == 'phase':
-					self.fig = plt.scatter(self.sections[-1][0],np.angle(self.sections[-1][1]))
+					self.fig = plt.scatter(self.sections[-1][0],np.angle(self.sections[-1][1]),s=s)
 				elif fun == 'real':
-					self.fig = plt.scatter(self.sections[-1][0],np.real(self.sections[-1][1]))
+					self.fig = plt.scatter(self.sections[-1][0],np.real(self.sections[-1][1]),s=s)
 				elif fun == 'imag':
-					self.fig = plt.scatter(self.sections[-1][0],np.imag(self.sections[-1][1]))
+					self.fig = plt.scatter(self.sections[-1][0],np.imag(self.sections[-1][1]),s=s)
 
 				if direction == 'Vertical':
 					if self.type == "Spatial":
-						self.fig = plt.xlabel('Y, μm',fontsize=18)
+						self.fig = plt.xlabel(r'Y  ($\mu$m)',fontsize=18)
 					elif self.type == "Voltage Sweep":
 						self.fig = plt.xlabel('Voltage, V',fontsize=18)
 					elif self.type == "Frequency Sweep":
-						self.fig = plt.xlabel('Wavenumber, cm⁻¹',fontsize=18)
+						self.fig = plt.xlabel(r'Wavenumber  (cm$^{-1})$',fontsize=18)
 
 				elif direction == 'Horizontal':
 					if self.fft_flag:
-						self.fig = plt.xlabel('Q, x10⁴ cm⁻¹',fontsize=18)	# Check the units
+						self.fig = plt.xlabel(r'q, $\times 10^4$  (cm$^{-1})$',fontsize=18)	# Check the units
 					else:
-						self.fig = plt.xlabel('X, μm',fontsize=18)
+						self.fig = plt.xlabel(r'X  ($\mu$m)',fontsize=18)
+
+				self.fig = plt.tick_params(axis='both',which='major',labelsize=16)
+				self.fig = plt.tick_params(axis='both',which='minor',labelsize=16)
+				self.fig = plt.xlim(xlim)
+				self.fig = plt.ylim(ylim)
+
+				self.fig = plt.ylabel(self.channel_name + "  " + fun,fontsize=18)
+
+			elif plot_type == 'plot_and_scatter':
+
+				if not self.plot_flag:
+					self.fig = plt.figure(figsize=figsize)
+					self.plot_flag = True
+
+				if fun == 'abs':
+					self.fig = plt.scatter(self.sections[-1][0],np.abs(self.sections[-1][1]),s=s)
+					self.fig = plt.plot(self.sections[-1][0],np.abs(self.sections[-1][1]))
+				elif fun == 'phase':
+					self.fig = plt.scatter(self.sections[-1][0],np.angle(self.sections[-1][1]),s=s)
+					self.fig = plt.plot(self.sections[-1][0],np.angle(self.sections[-1][1]))
+				elif fun == 'real':
+					self.fig = plt.scatter(self.sections[-1][0],np.real(self.sections[-1][1]),s=s)
+					self.fig = plt.plot(self.sections[-1][0],np.real(self.sections[-1][1]))
+				elif fun == 'imag':
+					self.fig = plt.scatter(self.sections[-1][0],np.imag(self.sections[-1][1]),s=s)
+					self.fig = plt.plot(self.sections[-1][0],np.imag(self.sections[-1][1]))
+
+				if direction == 'Vertical':
+					if self.type == "Spatial":
+						self.fig = plt.xlabel(r'Y  ($\mu$m)',fontsize=18)
+					elif self.type == "Voltage Sweep":
+						self.fig = plt.xlabel('Voltage, V',fontsize=18)
+					elif self.type == "Frequency Sweep":
+						self.fig = plt.xlabel(r'Wavenumber  (cm$^{-1})$',fontsize=18)
+
+				elif direction == 'Horizontal':
+					if self.fft_flag:
+						self.fig = plt.xlabel(r'q, $\times 10^4$  (cm$^{-1})$',fontsize=18)	# Check the units
+					else:
+						self.fig = plt.xlabel(r'X  ($\mu$m)',fontsize=18)
 
 				self.fig = plt.tick_params(axis='both',which='major',labelsize=16)
 				self.fig = plt.tick_params(axis='both',which='minor',labelsize=16)
@@ -896,7 +1000,7 @@ class snom():
 				self.plot_flag = False
 
 		return self
-
+		
 	def drift_corr(self,v):
 
 		v = np.array(v)
@@ -920,9 +1024,7 @@ class snom():
 			else:
 				x_edge = find_x(i,v[j,:],v[j+1,:])
 
-			
 			aux_map[i,:] = self.map[i,x_edge-x_min:x_edge+len(self.x)-x_max]
-
 
 		self.x = self.x[0:len(self.x)-x_max+x_min]
 
@@ -940,10 +1042,533 @@ class snom():
 
 		return self
 
+	# DoS computaton functions
+
+	def interpolate(self, interpolationFactor: int, method: str = 'linear'):
+		# interpolate the sSNOM signal such us the map has more points.
+		# the amount of which depends on the interpolationFactor:
+		#
+		# A Map (NxM) -> (p*N x p*M)
+		#
+		# Here, p is the interpolationFactor
+
+		Interpolatior_Real_part = RegularGridInterpolator((self.y, self.x), np.real(self.map), method=method)
+		Interpolatior_Imag_part = RegularGridInterpolator((self.y, self.x), np.imag(self.map), method=method)
+
+		x = np.linspace(0,np.max(self.x), int(interpolationFactor*len(self.x)))
+		y = np.linspace(0,np.max(self.y), int(interpolationFactor*len(self.y)))
+		X_mesh, Y_mesh = np.meshgrid(y, x, indexing='ij')
+
+		points_fine = np.vstack([X_mesh.ravel(), Y_mesh.ravel()]).T
+
+		# Perform the interpolation
+		Real_part = Interpolatior_Real_part(points_fine).reshape(Y_mesh.shape)
+		Imag_part = Interpolatior_Imag_part(points_fine).reshape(Y_mesh.shape)
+
+		# Update the class instance
+		self.map = Real_part + 1j*Imag_part
+		self.x = x
+		self.y = y
+		self.X, self.Y  = np.meshgrid(x, y)
+
+		return self
+	
+	def extract_coordinates(self, i ,pixel):
+
+		self.plot(pixel=pixel, show=False)
+
+		plt.title(f'Select {i} points from the plot')
+		coordinates = plt.ginput(i, timeout=-1)
+		plt.close()
+
+		return np.array(coordinates, dtype=int) if pixel else np.array(coordinates, dtype=float)
+	
+	def rotation(self, load: bool, save: bool, coordinates = None, path = ".\\Analysis Output\\"):
+		# The rotation is performed by select two coordinates that identify a line.
+		# This line will be aligned to the horizontal axis.
+
+		coordinates = np.loadtxt(path + "Rotation\\" + self.folder + ".txt", delimiter=',') if load else coordinates
+
+		if coordinates is None:
+			coordinates = self.extract_coordinates(i=2,pixel=False)
+			formatted_coordinates = np.array2string(coordinates, precision=8, separator=',', suppress_small=True, max_line_width=np.inf)
+			print(f"The extracted coordinates to calculate the rotation are: {formatted_coordinates}")
+
+		if save:
+			os.makedirs(path + "Rotation\\") if not os.path.exists(path + "Center\\") else None 
+			np.savetxt(path + "Rotation\\" + self.folder + ".txt", coordinates, delimiter=',', fmt='%.8f') 
+
+		# Angle extraction
+		angle = np.arctan((coordinates[1,1]-coordinates[0,1]) / (coordinates[1,0]-coordinates[0,0]))*180/np.pi
+
+		# Scan rotation
+		Real_part = rotate(np.real(self.map), angle, reshape=False)
+		Imag_part = rotate(np.imag(self.map), angle, reshape=False)
+
+		# Update the class instance
+		self.map = Real_part + 1j*Imag_part
+
+		return self
+	
+	def rectangle_cut(self, Lx, Ly, load: bool, save: bool, coordinates = None, path = ".\\Analysis Output\\"):
+
+		dx = int(Lx/(self.x[1]-self.x[0]))
+		dy = int(Ly/(self.y[1]-self.y[0]))
+
+		coordinates = np.loadtxt(path + "Center\\" + self.folder + ".txt", delimiter=',', dtype=int).reshape(1, 2) if load else coordinates
+
+		if coordinates is None:
+			coordinates = self.extract_coordinates(i=1,pixel=True)
+			formatted_coordinates = np.array2string(coordinates, precision=8, separator=',', suppress_small=True, max_line_width=np.inf)
+			print(f"The extracted coordinates of the unit cell center are: {formatted_coordinates}")
+
+		if save:
+			os.makedirs(path + "Center\\") if not os.path.exists(path + "Center\\") else None 
+			np.savetxt(path + "Center\\" + self.folder + ".txt", coordinates, delimiter=',', fmt='%d')
+
+		self.cut(x_range=[coordinates[0,0]-dx//2,coordinates[0,0]+dx//2],y_range=[coordinates[0,1]-dy//2,coordinates[0,1]+dy//2],y_reset=True)
+
+		return self
+	
+	def symmetrization(self):
+
+		if self.map.shape[0] == self.map.shape[1]:
+			Real_part = (np.real(self.map) + rotate(np.real(self.map), 90) + rotate(np.real(self.map), 180) + rotate(np.real(self.map), 270))/4
+			Imag_part = (np.imag(self.map) + rotate(np.imag(self.map), 90) + rotate(np.imag(self.map), 180) + rotate(np.imag(self.map), 270))/4
+
+		# Update the class instance
+		self.map = Real_part + 1j*Imag_part
+
+		return self
+
+	def DoS_computation(self, Lx, Ly, load: bool, save: bool, BG_range = range(10,100), interpolationFactor = 5, coordinates_rotation = None, coordinates_center = None, symmetrization = True , plot = True):
+
+		# Background extraction
+		background = self.map
+		Real_part = np.mean(np.real(background[:,BG_range]),axis=1)		# Average linewise (real part)
+		Imag_part = np.mean(np.imag(background[:,BG_range]),axis=1)		# Average linewise (imaginary part)
+
+		mean_background = np.mean(Real_part) + 1j*np.mean(Imag_part)
+
+		Std_Real_part = np.std(np.real(background[:,BG_range]),axis=1)		# Standard Deviation linewise (real part)
+		Std_Imag_part = np.std(np.imag(background[:,BG_range]),axis=1)		# Standard Deviation linewise (imaginary part)
+
+		std_background = np.mean(Std_Real_part) + 1j*np.mean(Std_Imag_part)
+
+		self.normalize(data = Real_part + 1j*Imag_part)
+
+		# Unit cell extraction
+		self.interpolate(interpolationFactor = interpolationFactor)										# interpolate for better accuracy during the geometrical transfomation step
+		self.rotation(load = load, save = save, coordinates = coordinates_rotation)						# correct the scan misalignment with respect to the lattice
+		self.rectangle_cut(Lx=Lx ,Ly=Ly ,load = load , save = save, coordinates=coordinates_center)		# cut the unit cell
+		if plot: self.plot()
+
+		if symmetrization:
+			self.symmetrization()		# symmetrization
+			if plot: self.plot()
+		
+		return	self.wavelength, np.mean(np.mean(self.map, axis=0)), mean_background, std_background, 
+
+# --------------------------------------------- FUNCTIONS --------------------------------------------- #
+# Normalization
+
+def show_normalization_data(power_data, snom_scan, save = False, savedir = "Figures/normalization_data", add_save = ""): 
+	# power_data is the intensities
+	# snom_scan is the snom object created by the scan 
+	# -------- goal : show the full power map
+
+	x = snom_scan.x
+	freq = snom_scan.y
+
+	x_trimmed = x[:power_data.shape[1]]
+	freq_trimmed = freq[:power_data.shape[0]]
+
+	plot_maps(x_trimmed, freq_trimmed, power_data, save, savedir, f"normalization_data_{add_save}")
+
+	#power_data_normalized = power_data/power_data[]
+
+
+def I_avg_freq_dependancy(power_data, snom_scan, num_pixel=1,
+                          list_SNOM_signal=["O1", "O2", "O3", "O4"], normalized_signal = True,
+                          save=False, savedir="Figures/normalization_data",
+                          add_save=""):
+
+	x = snom_scan.x
+	freq = snom_scan.y
+
+	x_trimmed = x[:num_pixel]
+	freq_trimmed = freq[:power_data.shape[0]]
+	power_data_trimmed = power_data[:, :num_pixel]
+
+	I_means = np.mean(power_data_trimmed, axis=1)
+	I_stds  = np.std(power_data_trimmed, axis=1)
+
+	if normalized_signal:
+		I_means = I_means/np.max(I_means)
+
+	all_I_means = [I_means]
+	all_I_stds  = [I_stds]
+
+	I_plot_percentage_variation(freq_trimmed, I_means, I_stds, label="Power Data")
+
+
+	# Loop over SNOM channels
+	for sig in list_SNOM_signal:
+		I_Oi = np.abs(snom_scan.channel(sig).map)
+		I_Oi_trimmed = I_Oi[:power_data.shape[0], :num_pixel]
+
+		I_means_Oi = np.mean(I_Oi_trimmed, axis=1)
+		I_stds_Oi  = np.std(I_Oi_trimmed, axis=1)
+
+		if normalized_signal: 
+			I_means_Oi = I_means_Oi/np.max(I_means_Oi)
+
+		all_I_means.append(I_means_Oi)
+		all_I_stds.append(I_stds_Oi)
+
+		plots_I_avg_freq_dependancy(x_trimmed, freq_trimmed,[I_means_Oi], [I_stds_Oi], labels = [sig], std_activated= False, save = save ,name = sig + " mean intensity in function of the frequency "+f"{add_save}")
+
+		plot_I_std_freq(x_trimmed, freq_trimmed, I_means_Oi, I_stds_Oi)
+
+	plots_I_avg_freq_dependancy(x_trimmed, freq_trimmed,
+								[I_means], [I_stds], std_activated= False, labels = ["power data"],save = save ,name= "Power mean intensity in function of the frequency "+f"{add_save}")
+
+	# Convert lists to 2D numpy arrays: shape = (n_signals, n_freqs)
+	all_I_means = np.vstack(all_I_means)
+	all_I_stds  = np.vstack(all_I_stds)
+
+	plots_I_avg_freq_dependancy(x_trimmed, freq_trimmed,
+								all_I_means, all_I_stds, labels = ["power data "]+ list_SNOM_signal, std_activated=False, name =  "Comparison of mean intesities "+f"{add_save}"+" ".join(list_SNOM_signal)+" power data")
+
+	return freq_trimmed, all_I_means, all_I_stds
+	
+
+# maps division	
+def Oi_power_data_maps_division(power_data, snom_scan, num_pixel = 1,list_SNOM_signal=["O1", "O2", "O3", "O4"], save = False, savedir = "Figures", add_save = ""):
+	x = snom_scan.x
+	freq = snom_scan.y
+
+	x_trimmed = x[:num_pixel]
+	freq_trimmed = freq[:power_data.shape[0]]
+	power_data_trimmed = power_data[:, :num_pixel]
+
+	plot_maps(x_trimmed, freq_trimmed, power_data_trimmed)
+
+	I_means = np.mean(power_data_trimmed, axis=1)
+	I_means = I_means[:, None] # to enable the division of each scan by the I mean at each frequency
+
+	for sig in list_SNOM_signal:
+		I_Oi = np.abs(snom_scan.channel(sig).map)
+		I_Oi_trimmed = I_Oi[:power_data.shape[0], :num_pixel]
+
+		plot_maps(x_trimmed, freq_trimmed, I_Oi_trimmed)
+
+		print((I_means))
+
+		I_Oi_over_power = I_Oi_trimmed/I_means # indeed as std of 3 percent in the I mean, then can use it like this (consider variation negligable)
+		I_Oi_full_matrix_over_power = I_Oi_trimmed/power_data_trimmed
+
+		plot_maps(x_trimmed, freq_trimmed, I_Oi_over_power, save= save ,savedir = savedir ,name= sig+" signal divided by mean power "+f"{add_save}")
+		plot_maps(x_trimmed, freq_trimmed, I_Oi_full_matrix_over_power , save= save, savedir = savedir , name = sig +" full matrix division by power data "+f"{add_save}")
+
+# plot functions
+def plot_maps(x, f, I_map, save = False, savedir = "Figures", name = ""):
+
+	##### plots 
+	plt.figure(figsize=(8,6))
+	extent = [x[0], x[-1], f[0], f[-1]]
+	im = plt.imshow(I_map, cmap='hot', origin='lower', aspect='auto', extent=extent)
+
+	# Add a colorbar to show intensity values
+	cbar = plt.colorbar(im)
+	cbar.set_label("Intensity", fontsize=16)   # colorbar label fontsize
+	cbar.ax.tick_params(labelsize=18)   
+
+	# Label axes with custom font sizes
+	plt.xlabel("$x$ ($\\mu$m)", fontsize=16)   # x-axis label size 16
+	plt.ylabel("$f$ (cm$^{-1}$)", fontsize=16) # y-axis label size 16
+	plt.title(f"{name}", fontsize=12) # title size 12
+
+	# Set tick label font sizes
+	plt.xticks(fontsize=18)
+	plt.yticks(fontsize=18)
+
+	# saving the files
+	if save:
+		name_save = name.replace(" ", "_")	
+
+		file_name = f"{name_save}.png"
+		file_path = os.path.join(savedir, file_name)
+		os.makedirs(os.path.dirname(file_path), exist_ok=True)
+		plt.savefig(file_path, dpi=300, transparent=True, bbox_inches='tight')
+
+	plt.show()
+
+
+def plots_I_avg_freq_dependancy(x,f, I_means_list, I_stds_list, labels,std_activated = True, save = False , name = "", savedir = "Figures"):
+
+	plt.figure(figsize=(5,8))
+	for i in range(len(I_means_list)):
+		plt.plot(I_means_list[i],f, label="Mean "+labels[i])
+		if std_activated :
+			plt.fill_between(
+				f,
+				I_means_list[i] - I_stds_list[i],
+				I_means_list[i] + I_stds_list[i],
+				color="blue",
+				alpha=0.3,   # transparency
+				label="± std "+labels[i]
+			)
+
+	plt.ylabel("Frequency", fontsize = 16)
+	plt.xlabel("Intensity", fontsize = 16)
+	plt.legend()
+	plt.title(f"{name}", fontsize = 14)
+	plt.grid(True, linestyle="--", alpha=0.6)  # optional, makes it easier to read
+
+	plt.xticks(fontsize=18)
+	plt.yticks(fontsize=18)
+
+	plt.tight_layout()
+
+	if save:
+		name_save = name.replace(" ", "_")	
+
+		file_name = f"{name_save}.png"
+		file_path = os.path.join(savedir, file_name)
+		os.makedirs(os.path.dirname(file_path), exist_ok=True)
+		plt.savefig(file_path, dpi=300, transparent=True, bbox_inches='tight')
+
+	plt.show()
+
+
+
+def plot_I_std_freq(x,f,I_means, I_stds):
+
+	plt.figure(figsize=(8,5))
+	plt.plot(f, I_stds)
+
+	plt.xlabel("Frequency")
+	plt.ylabel("Std. deviation")
+	plt.title("Laser Signal Variability")
+	plt.grid(True, linestyle="--", alpha=0.6)  # optional, makes it easier to read
+	plt.tight_layout()
+	plt.show()
+
+def I_plot_percentage_variation(freq, I_means, I_stds, label="Signal"):
+    percentage_variation = (I_stds / I_means) * 100
+
+    plt.figure(figsize=(8,5))
+    plt.plot(freq, percentage_variation, label=label)
+    plt.xlabel("Frequency")
+    plt.ylabel("Percentage Variation ($\%$)")
+    plt.title(f"{label} - Percentage Variation vs Frequency")
+    plt.grid(True, linestyle="--", alpha=0.6)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+# sSNOM Data analysis
+def peak_spacing_in_SNOM(snom_data, mesure_position ,pixel_range = [1], plot = False, saveindex = [], savedir = "Figures"):
+	peak_distances = []
+	for i in pixel_range:
+		section_at_i = [snom_data.x, np.abs(snom_data.map[i, :][:])] # gives x and Oi signal
+		peaks, properties = find_peaks(savgol_filter(section_at_i[1], window_length=11, polyorder=3), height=0 )
+		if plot:
+			plt.figure()
+			plt.plot(section_at_i[0], section_at_i[1])
+			plt.plot(section_at_i[0][peaks], section_at_i[1][peaks], '.')
+			plt.xlim(mesure_position)
+			plt.xlabel("$x$ ($\mu$m)")
+			plt.ylabel("I (u.a.)")
+			name_save = f"{i}, {snom_data.y[i]}"+"cm$^{-1}$ oscillations in hBN"
+			plt.title(name_save)
+			plt.grid(True, linestyle="--", alpha=0.6)  # optional, makes it easier to read
+
+			
+			if i in saveindex:
+				name_save = name_save.replace(" ", "_")	
+				file_name = f"{name_save}.png"
+				file_path = os.path.join(savedir, file_name)
+				os.makedirs(os.path.dirname(file_path), exist_ok=True)
+				plt.savefig(file_path, dpi=300, transparent=True, bbox_inches='tight')
+			plt.show()
+
+
+		peaks_in_range = [p for p in peaks if mesure_position[0] <= section_at_i[0][p] <= mesure_position[1]]
+
+		diff_1a2 = (section_at_i[0][peaks_in_range[-1]]-section_at_i[0][peaks_in_range[-2]])
+		diff_2a3 = (section_at_i[0][peaks_in_range[-2]]-section_at_i[0][peaks_in_range[-3]])
+
+		if section_at_i[1][peaks_in_range[-1]] < section_at_i[1][peaks_in_range[-2]]:
+			mean_peak_distance = (diff_2a3 +(section_at_i[0][peaks_in_range[-3]]-section_at_i[0][peaks_in_range[-4]]))/2
+			#mean_peak_distance = diff_2a3
+			#print(f"peak {i} ")
+		else:
+			mean_peak_distance = (diff_1a2 + diff_2a3)/2
+			#mean_peak_distance = diff_1a2
+
+		peak_distances = peak_distances + [mean_peak_distance]
+
+	return peak_distances	
+
+
+def plot_peak_spacing(peak_distances, snom_data, good_index_list, thickness,n , plot = True, save = False):
+	if plot:
+		plt.figure(figsize=(8,6))
+		plt.plot(peak_distances,( snom_data.y[good_index_list]), '.') 
+		plt.xlabel("Mean peak difference ($\mu$m)", fontsize = 16)
+		plt.ylabel("Wavenumber (cm$^{-1}$)", fontsize = 16)
+		plt.xticks(fontsize=18)
+		plt.yticks(fontsize=18)
+		plt.grid(True, linestyle="--", alpha=0.6)  # optional, makes it easier to read
+		plt.tight_layout()
+		plt.show()
+	
+	q = np.array([1/x for x in peak_distances])*2*np.pi/2 # to have actual wavevector
+	new_freqs = np.array(snom_data.y[good_index_list])
+
+	m_fit, b_fit = np.polyfit(q, new_freqs, 1)
+
+	# fit part in h11BN for thickness
+	epsilon_xx = 5.32 * (1.+ (((1608.8)**2 -1359.8**2)/(1359.8**2 - new_freqs**2. - 1j * new_freqs* 2.1)))
+	epsilon_zz = 3.15 * (1.+ (((814)**2 -785.**2)/(785.**2 - new_freqs**2. - 1j * new_freqs* 1.)))
+
+	epsilon_minus = -10000. #(gold)
+	epsilon_plus = 1. # air
+
+	phi = np.sqrt(- epsilon_xx/epsilon_zz +0j)
+
+	r_plus = (epsilon_xx - 1j * epsilon_plus * phi)/(epsilon_xx + 1j * epsilon_plus * phi)
+	r_minus = (epsilon_xx - 1j * epsilon_minus * phi)/(epsilon_xx + 1j * epsilon_minus * phi)
+
+	rho_plus = np.unwrap(np.angle(r_plus), discont=np.pi) * (1/np.pi)
+	rho_minus = np.unwrap(np.angle(r_minus), discont=np.pi) * (1/np.pi)
+
+	k_z_real = (np.pi / (2*thickness)) * (2*n + rho_plus + rho_minus)
+	#k_z_imag = (1j / (2*thickness)) * np.log(np.abs(r_plus) * np.abs(r_minus))
+	k_z = k_z_real #+ k_z_imag
+	wavenumber_k_x =( k_z / phi )* 1e-4
+	k_x_theoretical = np.real(wavenumber_k_x)   # Convert cm⁻¹ to μm⁻¹
+
+	if plot:
+		plt.figure(figsize=(8,6))
+		plt.plot(q,new_freqs, '.', label = "data") 
+		#plt.plot(q, m_fit*q + b_fit, '-', label = f"fit: ${m_fit:.3f}x + {b_fit:.3f}$")
+
+		plt.plot( k_x_theoretical, new_freqs , label = f"Computed t={(thickness*1e7):.1f} nm")
+
+		plt.xlabel("Fringes Wavevector (\mum^{-1} \cdot 2 \pi /2)", fontsize = 16)
+		plt.ylabel("Wavenumber (cm^{-1})", fontsize = 16)
+		plt.xticks(fontsize=18)
+		plt.yticks(fontsize=18)
+		plt.legend()
+		plt.grid(True, linestyle="--", alpha=0.6)  # optional, makes it easier to read
+		plt.tight_layout()
+		plt.show()
+
+	return m_fit, b_fit, wavenumber_k_x, new_freqs
+
+
+def prepare_data(i, data, measure_position=(2, 3.01)):
+    """Extract, slice, flip, and normalize data for index i."""
+    print(f"Raw y[{i}]: {data.y[i]}")
+    x, y = data.x, data.map[i, :]
+
+    # Select measurement window
+    mask = (x >= measure_position[0]) & (x <= measure_position[1])
+    x, y = x[mask], y[mask]
+
+    # Flip and normalize
+    y = np.flip(y)
+    x = x - x[0] + 1e-4
+    return x, y
+
+def fit_fringes(x, y, qr, qi, plot=True):
+    """Fit the fringes model and optionally plot results."""
+
+    def fringes(x, A, B, C, loss, phi):
+        return (A * np.sin(2*qr*x + phi) * np.exp(-2*qi*loss*x) / np.sqrt(x)
+              + B * np.sin(qr*x + phi) * np.exp(-qi*loss*x) / np.sqrt(x**3)
+              + C)
+
+    popt, _ = curve_fit(
+        fringes, x, np.real(y),
+        p0=[1, 0.1, 0.5, 1, 0.5],
+        bounds=([-100., -10000., -10., 1, -2*np.pi],
+                [100., 10000., 10., 6., 2*np.pi]),
+        maxfev=1_000_000
+    )
+
+    print(f"A:    {popt[0]:.1f}")
+    print(f"B:    {popt[1]:.1f}")
+    print(f"C:    {popt[2]:.1f}")
+    print(f"loss: {popt[3]:.1f}")
+    print(f"phi:  {popt[4]*180/np.pi:.1f}")
+
+    if plot:
+        y_fit = fringes(x, *popt)
+        plt.figure(figsize=(10, 5))
+        plt.plot(x, np.real(y), '.', label='Data (Real)', alpha=0.5)
+        plt.plot(x, np.real(y_fit), '-', label='Fit (Real)', linewidth=2)
+        plt.xlabel("x")
+        plt.ylabel("Re(y)")
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+    return popt
+
+
+def fit_peaks_model(x, y, plot=True):
+	"""Detect peaks, fit sqrt(x) model, and optionally plot results."""
+
+	peaks, _ = find_peaks(savgol_filter(y, window_length=11, polyorder=3), height=0)
+
+	def model(x, a, b):
+		return a / np.sqrt(x**3) + b
+
+	params, _ = curve_fit(model, x[peaks], np.real(y[peaks]), p0=[1, 0])
+	a_fit, b_fit = params
+	print(f"Fitted parameters: a = {a_fit:.3f}, b = {b_fit:.3f}")
+
+	if plot:
+		plt.figure(figsize=(8, 6))
+		plt.plot(x, np.real(y), '.', label="Data")
+		plt.plot(x[peaks], np.real(y[peaks]), '.', label="Peaks")
+		plt.plot(x, model(x, a_fit, b_fit), color="red", label=r"$1/\sqrt{x^3}$ Fit")
+		plt.xlabel("x")
+		#plt.xlim([0.1,1])
+		plt.ylim([0.75,1.25])
+		plt.ylabel("y")
+		plt.legend()
+		plt.tight_layout()
+		plt.show()
+
+	return a_fit, b_fit
+
+def analyze_fringes(i, data, k_x_theoretical, measure_position=(2, 3.01), plot=True):
+	"""Main wrapper: prepares data, fits fringes, and fits peaks model."""
+	x, y = prepare_data(i, data, measure_position)
+	qr, qi = np.real(k_x_theoretical[i]), np.imag(k_x_theoretical[i])
+
+	print("/n qr :",qr, " qi :", qi, "/n")
+
+	popt_fringes = fit_fringes(x, y, qr, qi, plot=plot)
+	popt_model = fit_peaks_model(x, y, plot=plot)
+
+	return popt_fringes, popt_model
+
+
 # --------------------------------------------- TEST CODE --------------------------------------------- #
 
 if __name__ == '__main__':
 
-	import matplotlib.pyplot as plt
+	Data_path = "T:\\dataSNOM\\Cavity QED\\Patterned hBN\\PBN06\\High_resolution_scans_DoS"
 
-	test_root = "~\\data"
+	i = 0
+
+	example = snom(load_folder(Data_path,i))	# select scan
+	example.print_details()						# select channel
+
+	example.plot()
