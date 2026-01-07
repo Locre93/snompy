@@ -10,6 +10,7 @@ from scipy.ndimage import rotate
 
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, LinearSegmentedColormap
+from mpl_toolkits import axes_grid1
 
 from tkinter import Tk
 from tkinter.filedialog import asksaveasfilename
@@ -27,6 +28,16 @@ __authors__ = ["Lorenzo Orsini","Elisa Mendels","Matteo Ceccanti", "Bianca Turin
 # ----------------------------------------------------------------------------------------------------- #
 
 # ---------------------------------------------- LOADING ---------------------------------------------- #
+
+def add_colorbar(im, aspect=20, pad_fraction=0.5, **kwargs):
+	"""Add a vertical color bar to an image plot."""
+	divider = axes_grid1.make_axes_locatable(im.axes)
+	width = axes_grid1.axes_size.AxesY(im.axes, aspect=1./aspect) # type: ignore
+	pad = axes_grid1.axes_size.Fraction(pad_fraction, width)	  # type: ignore
+	current_ax = plt.gca()
+	cax = divider.append_axes("right", size=width, pad=pad)
+	plt.sca(current_ax)
+	return im.axes.figure.colorbar(im, cax=cax, **kwargs)
 
 def load_gsf(file_name):
 	with open(file_name,'rb') as gsf_file:
@@ -251,6 +262,7 @@ class snom():
 		self.sections = []
 
 		self.fft_flag = False
+		self.fft2D_flag = False
 		self.plot_flag = False
 
 		self.fig = None
@@ -476,323 +488,211 @@ class snom():
 
 		return self
 
-	def plot(self,fun='abs',cres=200,cmap='viridis',vmin=None,vmax=None,xlim=None,ylim=None,figsize=(8,6),save=False,show=True,pixel=False,colorbar=True, savedir = "Figures", data_type = ""):
-			
-		if pixel:
-
-			if type(fun) is list:
-
-				self.fig, self.axs = plt.subplots(1,2,figsize=(10,5.5))
-				self.fig.suptitle(self.folder + "  " + self.channel_name)
-
-				if fun[0] == 'abs' and fun[1] == 'phase':
-					self.axs[0].contourf(np.abs(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.adjust_phase(),cres,cmap=cmap)
-					self.axs[0].set_title('Absolute Value')	
-					self.axs[1].set_title('Phase')
-				elif fun[0] == 'abs' and fun[1] == 'real':
-					self.axs[0].contourf(np.abs(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(np.real(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Absolute Value')	
-					self.axs[1].set_title('Real Part')
-				elif fun[0] == 'abs' and fun[1] == 'imag':
-					self.axs[0].contourf(np.abs(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(np.imag(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Absolute Value')	
-					self.axs[1].set_title('Imaginary Part')
-				elif fun[0] == 'phase' and fun[1] == 'abs':
-					self.axs[0].contourf(self.adjust_phase(),cres,cmap=cmap)
-					self.axs[1].contourf(np.abs(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Phase')	
-					self.axs[1].set_title('Absolute Value')
-				elif fun[0] == 'phase' and fun[1] == 'real':
-					self.axs[0].contourf(self.adjust_phase(),cres,cmap=cmap)
-					self.axs[1].contourf(np.real(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Phase')	
-					self.axs[1].set_title('Real Part')
-				elif fun[0] == 'phase' and fun[1] == 'imag':
-					self.axs[0].contourf(self.adjust_phase(),cres,cmap=cmap)
-					self.axs[1].contourf(np.imag(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Phase')	
-					self.axs[1].set_title('Imaginary Part')
-				elif fun[0] == 'real' and fun[1] == 'abs':
-					self.axs[0].contourf(np.real(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(np.abs(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Real Part')	
-					self.axs[1].set_title('Absolute Value')
-				elif fun[0] == 'real' and fun[1] == 'phase':
-					self.axs[0].contourf(np.real(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.adjust_phase(),cres,cmap=cmap)
-					self.axs[0].set_title('Real Part')	
-					self.axs[1].set_title('Phase')
-				elif fun[0] == 'real' and fun[1] == 'imag':
-					self.axs[0].contourf(np.real(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(np.imag(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Real Part')	
-					self.axs[1].set_title('Imaginary Part')
-				elif fun[0] == 'imag' and fun[1] == 'abs':
-					self.axs[0].contourf(np.imag(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(np.abs(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Imaginary Part')	
-					self.axs[1].set_title('Absolute Value')
-				elif fun[0] == 'imag' and fun[1] == 'phase':
-					self.axs[0].contourf(np.imag(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.adjust_phase(),cres,cmap=cmap)
-					self.axs[0].set_title('Imaginary Part')	
-					self.axs[1].set_title('Phase')
-				elif fun[0] == 'imag' and fun[1] == 'real':
-					self.axs[0].contourf(np.imag(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(np.real(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Imaginary Part')	
-					self.axs[1].set_title('Real Part')
-				
-				self.axs[0].set_ylabel(ylabel='Slow axis, pixel',fontsize=18)
-				self.axs[0].set_xlabel(xlabel='Fast axis, pixel',fontsize=18)
-				self.axs[0].tick_params(axis='both',which='major',labelsize=16)
-
-				self.axs[1].set_xlabel(xlabel='Fast axis, pixel',fontsize=18)
-				self.axs[1].tick_params(axis='both',which='major',labelsize=16)
-
-			else:
-				if fun == 'abs':
-					self.fig = plt.figure(figsize=figsize)
-					self.fig = plt.contourf(np.abs(self.map),cres,cmap=cmap,vmin=vmin,vmax=vmax)
-					self.fig = plt.xlabel('Fast axis, pixel',fontsize=18)
-					self.fig = plt.ylabel('Slow axis, pixel',fontsize=18)
-
-				elif fun == 'phase':
-					self.fig = plt.figure(figsize=figsize)
-					self.fig = plt.contourf(self.adjust_phase(),cres,cmap=cmap,vmin=vmin,vmax=vmax)
-					self.fig = plt.xlabel('Fast axis, pixel',fontsize=18)
-					self.fig = plt.ylabel('Slow axis, pixel',fontsize=18)
-
-				elif fun == 'real':
-					self.fig = plt.figure(figsize=figsize)
-					self.fig = plt.contourf(np.real(self.map),cres,cmap=cmap,vmin=vmin,vmax=vmax)
-					self.fig = plt.xlabel('Fast axis, pixel',fontsize=18)
-					self.fig = plt.ylabel('Slow axis, pixel',fontsize=18)
-
-				elif fun == 'imag':
-					self.fig = plt.figure(figsize=figsize)
-					self.fig = plt.contourf(np.imag(self.map),cres,cmap=cmap,vmin=vmin,vmax=vmax)
-					self.fig = plt.xlabel('Fast axis, pixel',fontsize=18)
-					self.fig = plt.ylabel('Slow axis, pixel',fontsize=18)
-
-				elif fun == 'all':
-					self.fig, self.axs = plt.subplots(2,2,figsize=(10,8))
-
-					self.fig.suptitle(self.folder + "  " + self.channel_name)
-
-					self.axs[0, 0].set_title('Absolute Value')
-					self.axs[0, 0].contourf(np.abs(self.map),cres,cmap=cmap)
-					self.axs[0, 0].set_ylabel(ylabel='Slow axis, pixel',fontsize=16)
-
-					self.axs[0, 1].set_title('Phase')
-					self.axs[0, 1].contourf(self.adjust_phase(),cres,cmap=cmap)
-
-					self.axs[1, 0].set_title('Real Part')
-					self.axs[1, 0].contourf(np.real(self.map),cres,cmap=cmap)
-					self.axs[1, 0].set_ylabel(ylabel='Slow axis, pixel',fontsize=16)
-					self.axs[1, 0].set_xlabel(xlabel='Fast axis, pixel',fontsize=16)
-
-					self.axs[1, 1].set_title('Imaginary Part')
-					self.axs[1, 1].contourf(np.imag(self.map),cres,cmap=cmap)
-					self.axs[1, 1].set_xlabel(xlabel='Fast axis, pixel',fontsize=16)
-			
-		else:
-
-			if type(fun) is list:
-
-				self.fig, self.axs = plt.subplots(1,2,figsize=(10,5.5))
-				self.fig.suptitle(self.folder + "  " + self.channel_name)
-
-				if fun[0] == 'abs' and fun[1] == 'phase':
-					self.axs[0].contourf(self.X,self.Y,np.abs(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,self.adjust_phase(),cres,cmap=cmap)
-					self.axs[0].set_title('Absolute Value')	
-					self.axs[1].set_title('Phase')
-				elif fun[0] == 'abs' and fun[1] == 'real':
-					self.axs[0].contourf(self.X,self.Y,np.abs(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,np.real(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Absolute Value')	
-					self.axs[1].set_title('Real Part')
-				elif fun[0] == 'abs' and fun[1] == 'imag':
-					self.axs[0].contourf(self.X,self.Y,np.abs(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,np.imag(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Absolute Value')	
-					self.axs[1].set_title('Imaginary Part')
-				elif fun[0] == 'phase' and fun[1] == 'abs':
-					self.axs[0].contourf(self.X,self.Y,self.adjust_phase(),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,np.abs(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Phase')	
-					self.axs[1].set_title('Absolute Value')
-				elif fun[0] == 'phase' and fun[1] == 'real':
-					self.axs[0].contourf(self.X,self.Y,self.adjust_phase(),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,np.real(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Phase')	
-					self.axs[1].set_title('Real Part')
-				elif fun[0] == 'phase' and fun[1] == 'imag':
-					self.axs[0].contourf(self.X,self.Y,self.adjust_phase(),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,np.imag(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Phase')	
-					self.axs[1].set_title('Imaginary Part')
-				elif fun[0] == 'real' and fun[1] == 'abs':
-					self.axs[0].contourf(self.X,self.Y,np.real(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,np.abs(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Real Part')	
-					self.axs[1].set_title('Absolute Value')
-				elif fun[0] == 'real' and fun[1] == 'phase':
-					self.axs[0].contourf(self.X,self.Y,np.real(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,self.adjust_phase(),cres,cmap=cmap)
-					self.axs[0].set_title('Real Part')	
-					self.axs[1].set_title('Phase')
-				elif fun[0] == 'real' and fun[1] == 'imag':
-					self.axs[0].contourf(self.X,self.Y,np.real(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,np.imag(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Real Part')	
-					self.axs[1].set_title('Imaginary Part')
-				elif fun[0] == 'imag' and fun[1] == 'abs':
-					self.axs[0].contourf(self.X,self.Y,np.imag(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,np.abs(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Imaginary Part')	
-					self.axs[1].set_title('Absolute Value')
-				elif fun[0] == 'imag' and fun[1] == 'phase':
-					self.axs[0].contourf(self.X,self.Y,np.imag(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,self.adjust_phase(),cres,cmap=cmap)
-					self.axs[0].set_title('Imaginary Part')	
-					self.axs[1].set_title('Phase')
-				elif fun[0] == 'imag' and fun[1] == 'real':
-					self.axs[0].contourf(self.X,self.Y,np.imag(self.map),cres,cmap=cmap)
-					self.axs[1].contourf(self.X,self.Y,np.real(self.map),cres,cmap=cmap)
-					self.axs[0].set_title('Imaginary Part')	
-					self.axs[1].set_title('Real Part')
-
-
-				if self.type == "Spatial":
-					self.axs[0].set_ylabel(ylabel='Y, μm',fontsize=18)
-
-				elif self.type == "Voltage Sweep":
-					self.axs[0].set_ylabel(ylabel='Voltage, V',fontsize=18)
-
-				elif self.type == "Frequency Sweep":
-					self.axs[0].set_ylabel(ylabel='Wavenumber, cm⁻¹',fontsize=18)
-
-				if self.fft_flag:
-					self.axs[0].set_xlabel(xlabel='Q, x10⁴ cm⁻¹',fontsize=18)
-					self.axs[1].set_xlabel(xlabel='Q, x10⁴ cm⁻¹',fontsize=18)
+	def plot(self, fun='abs', cres=200, cmap='viridis', vmin=None, vmax=None,
+             xlim=None, ylim=None, figsize=(8,6), save=False, show=True,
+             pixel=False, colorbar=True, aspect='auto', savedir="Figures",
+             data_type="", logscale=False, use_imshow=False):
+			 
+		# --- axis labels ---
+		def axis_labels(fft_flag=False, fft2D_flag=False, pixel= False):
+			if fft2D_flag:
+				if pixel: 
+					xlabel = r'$q_x$ (pixel)'
+					ylabel = r'$q_y$ (pixel)'
 				else:
-					self.axs[0].set_xlabel(xlabel='X, μm',fontsize=18)
-					self.axs[1].set_xlabel(xlabel='X, μm',fontsize=18)
-
-				self.axs[0].tick_params(axis='both',which='major',labelsize=16)
-				self.axs[1].tick_params(axis='both',which='major',labelsize=16)
-
+					xlabel = r'$q_x$ ($\mu$m$^{-1}$)'
+					ylabel = r'$q_y$ ($\mu$m$^{-1}$)'
 			else:
-				if fun == 'abs':
-					self.fig = plt.figure(figsize=figsize)
-					self.fig = plt.contourf(self.X,self.Y,np.abs(self.map),cres,cmap=cmap,vmin=vmin,vmax=vmax)
-				elif fun == 'phase':
-					self.fig = plt.figure(figsize=figsize)
-					self.fig = plt.contourf(self.X,self.Y,self.adjust_phase(),cres,cmap=cmap,vmin=vmin,vmax=vmax)
-				elif fun == 'real':
-					self.fig = plt.figure(figsize=figsize)
-					self.fig = plt.contourf(self.X,self.Y,np.real(self.map),cres,cmap=cmap,vmin=vmin,vmax=vmax)
-				elif fun == 'imag':
-					self.fig = plt.figure(figsize=figsize)
-					self.fig = plt.contourf(self.X,self.Y,np.imag(self.map),cres,cmap=cmap,vmin=vmin,vmax=vmax)
+				if pixel:
+					if fft_flag:
+						xlabel = r'q (pixel)$'
+					else:
+						xlabel = r'X  (pixel)'
 
-				elif fun == 'all':
-					self.fig, self.axs = plt.subplots(2,2,figsize=(10,8))
+					if self.type == "Spatial":
+						ylabel = r'Y  (pixel)'
+					elif self.type == "Voltage Sweep":
+						ylabel = 'Voltage (pixel)'
+					elif self.type == "Frequency Sweep":
+						ylabel = r'Wavenumber  (pixel)$'
+					else:
+						ylabel = r'Y  (pixel)'
 
-					self.fig.suptitle(self.folder + "  " + self.channel_name)
+				else: 
+					if fft_flag:
+						xlabel = r'q, $\times 10^4$  (cm$^{-1})$'
+					else:
+						xlabel = r'X  ($\mu$m)'
 
-					self.axs[0, 0].set_title('Absolute value')
-					self.axs[0, 0].contourf(self.X,self.Y,np.abs(self.map),cres,cmap=cmap)
+					if self.type == "Spatial":
+						ylabel = r'Y  ($\mu$m)'
+					elif self.type == "Voltage Sweep":
+						ylabel = 'Voltage, V'
+					elif self.type == "Frequency Sweep":
+						ylabel = r'Wavenumber  (cm$^{-1})$'
+					else:
+						ylabel = r'Y  ($\mu$m)'    
 
-					self.axs[0, 1].set_title('Phase')
-					self.axs[0, 1].contourf(self.X,self.Y,self.adjust_phase(),cres,cmap=cmap)
+			return xlabel, ylabel
 
-					self.axs[1, 0].set_title('Real part')
-					self.axs[1, 0].contourf(self.X,self.Y,np.real(self.map),cres,cmap=cmap)
+		# --- extract data by type ---
+		def fun_data(fun_type, logscale=False):
+			if fun_type == 'abs':
+				data = np.abs(self.map)
+				if logscale:
+					data = np.log1p(data)
+				return data
+			elif fun_type == 'phase':
+				return self.adjust_phase()
+			elif fun_type == 'real':
+				return np.real(self.map)
+			elif fun_type == 'imag':
+				return np.imag(self.map)
+			else:
+				raise ValueError(f"Unknown fun_type: {fun_type}")
 
-					self.axs[1, 1].set_title('Imaginary part')
-					self.axs[1, 1].contourf(self.X,self.Y,np.imag(self.map),cres,cmap=cmap)
+		# --- Local helper: draw one subplot ---
+		def one_plot(ax, X, Y, data, pixel_mode=False, aspect='auto',
+								cres=200, cmap='viridis', vmin=None, vmax=None,
+								use_imshow=False, colorbar=True, fft_flag=False,
+								fft2D_flag=False, fun=None, n_fun = 1):
+
+			if use_imshow:
+				if pixel_mode:
+					im = ax.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax,
+									origin='lower', aspect='auto')
+					ax.xlim([self.x.min(),self.x.max()])
+					ax.ylim([self.y.min(), self.y.max()])
+				else:
 					
-					if self.type == "Spatial":
-						self.axs[0, 0].set(ylabel='Y, μm')
-						self.axs[1, 0].set(ylabel='Y, μm')
+					extent = [self.x.min(), self.x.max(), self.y.min(), self.y.max()]
+					im = ax.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax,
+									extent=extent, origin='lower',
+									interpolation='nearest',
+									aspect='equal' if aspect == 'equal' else 'auto')
+			else:
+				if pixel_mode:
+					im = ax.contourf(data, cres, cmap=cmap, vmin=vmin, vmax=vmax)
+				else:
+					im = ax.contourf(X, Y, data, cres, cmap=cmap, vmin=vmin, vmax=vmax)
 
-					elif self.type == "Voltage Sweep":
-						self.axs[0, 0].set(ylabel='Voltage, V')
-						self.axs[1, 0].set(ylabel='Voltage, V')
+			xlabel, ylabel = axis_labels(
+				fft_flag=fft_flag, fft2D_flag=fft2D_flag, pixel = pixel_mode
+			)
+			ax.set_xlabel(xlabel, fontsize=18)
+			ax.set_ylabel(ylabel, fontsize=18)
+			ax.tick_params(axis='both', which='major', labelsize=16)
+			ax.tick_params(axis='both', which='minor', labelsize=16)
 
-					elif self.type == "Frequency Sweep":
-						self.axs[0, 0].set(ylabel='Wavenumber, cm⁻¹')
-						self.axs[1, 0].set(ylabel='Wavenumber, cm⁻¹')
+			if aspect == 'equal':
+				ax.set_aspect('equal')
 
-					if self.fft_flag:
-						self.axs[1, 0].set(xlabel='Q, x10⁴ cm⁻¹')
-						self.axs[1, 1].set(xlabel='Q, x10⁴ cm⁻¹')
-					else:
-						self.axs[1, 0].set(xlabel='X, μm')
-						self.axs[1, 1].set(xlabel='X, μm')
+			if aspect == "equal":
+				add_colorbar(im=im)
+			elif colorbar:
+				plt.colorbar(im, ax=ax)
+				
 
-				if not fun == 'all':
-					self.fig = plt.tick_params(axis='both',which='major',labelsize=16)
-					self.fig = plt.tick_params(axis='both',which='minor',labelsize=16)
-					self.fig = plt.title(self.folder + "  " + self.channel_name + "  " + fun)
-					self.fig = plt.xlim(xlim)
-					self.fig = plt.ylim(ylim)
+			title_dict = {"abs" : "Absolute value", "phase": "Phase", "real": "Real part", "imag": "Imaginary part" }
 
-					if self.type == "Spatial":
-						self.fig = plt.ylabel('Y, μm',fontsize=18)
-					elif self.type == "Voltage Sweep":
-						self.fig = plt.ylabel('Voltage, V',fontsize=18)
-					elif self.type == "Frequency Sweep":
-						self.fig = plt.ylabel('Wavenumber, cm⁻¹',fontsize=18)
+			if fun is not None:
+				if n_fun == 1:
+					ax.set_title(f"{self.folder}  {self.channel_name}  {fun}", fontsize = 12)
+				else: 
+					ax.set_title(f"{title_dict[fun]}", fontsize = 12)
 
-					if self.fft_flag:
-						self.fig = plt.xlabel('Q, x10⁴ cm⁻¹',fontsize=18)	# Check the units
-					else:
-						self.fig = plt.xlabel('X, μm',fontsize=18)
+			return im
 
+		# nb of plot
+		if fun == 'all':
+			fun_list = ['abs', 'phase', 'real', 'imag']
+		elif isinstance(fun, list):
+			fun_list = fun
+		else:
+			fun_list = [fun]
+
+		nplots = len(fun_list)
+
+		if nplots == 1: 
+			n_vert_subplots = 1 
+			n_hor_subplots = 1 
+		else: 
+			n_hor_subplots = 2 
+			n_vert_subplots = (nplots + 1) // 2
+
+		# --- Create figure and axes ---
+		fig, axs = plt.subplots(
+			n_vert_subplots, n_hor_subplots , figsize=(figsize[0] * n_hor_subplots, figsize[1]*n_vert_subplots), squeeze=False
+		)
+		axs = axs[0]
+
+		# --- Coordinates ---
+		if pixel:
+			X = Y = None
+		else:
+			X = self.X
+			Y = self.Y
+
+		images = []
+		for ax, fun_type in zip(axs, fun_list):
+			data = fun_data(fun_type, logscale=logscale)
+
+			im = one_plot(
+				ax, X, Y, data,
+				pixel_mode=pixel,
+				aspect=aspect,
+				cres=cres,
+				cmap=cmap,
+				vmin=vmin, vmax=vmax,
+				use_imshow=use_imshow,
+				colorbar=colorbar,
+				fft_flag=self.fft_flag,
+				fft2D_flag= self.fft2D_flag,
+				fun=fun_type, 
+				n_fun= nplots,
+			)
+			images.append(im)
+
+			if xlim is not None:
+				ax.set_xlim(xlim)
+			if ylim is not None:
+				ax.set_ylim(ylim)
+
+		if nplots !=1: 
+			fig.suptitle(self.folder + "  " + self.channel_name, fontsize = 16)
+
+		# --- Attach to self for later use ---
+		if nplots == 1:
+			self.fig = fig
+			self.axs = axs[0]
+			self._last_image = images[0]
+		else:
+			self.fig = fig
+			self.axs = axs
+			self._last_images = images
+
+		# --- Save and show ---
 		if save:
-			# Extract the folder name
-			folder_name = os.path.basename(os.path.normpath(self.path))
-
-			# Split into tokens
-			tokens = folder_name.split()
-
-			# First token = date (YYYY-MM-DD)
-			date = tokens[0]
-
-			# Second token = measurement number (skip it)
-			# Remaining tokens = user-chosen description
-			description_tokens = tokens[2:] if len(tokens) > 2 else []
-
-			# Join description with underscores
-			description = "_".join(description_tokens)
-
-			# Clean description (remove unwanted characters)
-			description = re.sub(r'[^A-Za-z0-9_-]+', '_', description)
-
-			# Build filename
-			file_name = f"{date}_{description}_{self.channel_name}_{data_type}.png"
-
-			# Full path
-			file_path = os.path.join(savedir, file_name)
-
-			# Ensure directory exists
-			os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-			# Save figure
-			self.fig = plt.savefig(file_path, dpi=300, transparent=True, bbox_inches='tight')
-			print(f"Plot saved as: {file_path}")
+			self._save_plot(self.fig, savedir=savedir, data_type=data_type)
 
 		if show:
-			self.fig = plt.show()
+			plt.show()
 
-		return self	
+		return self
+
+	def _save_plot(self, fig, savedir="Figures", data_type=""):
+			"""Save the plot to a file.""" 
+			folder_name = os.path.basename(os.path.normpath(self.path)) 
+			tokens = folder_name.split() 
+			date = tokens[0] if tokens else "unknown" 
+			description_tokens = tokens[2:] if len(tokens) > 2 else [] 
+			description = "_".join(description_tokens) 
+			description = re.sub(r'[^A-Za-z0-9_-]+', '_', description) 
+			file_name = f"{date}_{description}_{self.channel_name}_{data_type}.png" 
+			file_path = os.path.join(savedir, file_name) 
+			os.makedirs(os.path.dirname(file_path), exist_ok=True) 
+			fig.savefig(file_path, dpi=300, transparent=True, bbox_inches='tight') 
+			print(f"Plot saved as: {file_path}")
 
 	def fft(self):
 
