@@ -1,21 +1,26 @@
 import os, re, struct
 
-import numpy as np
-
 from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import curve_fit
-from scipy.signal import find_peaks
-from scipy.signal import savgol_filter
+from scipy.signal import find_peaks, savgol_filter
 from scipy.ndimage import rotate
+from scipy.stats import linregress
 
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 from mpl_toolkits import axes_grid1
 
 from tkinter import Tk
 from tkinter.filedialog import asksaveasfilename
 
-__version__ = "1.0.0"
+import numpy as np
+from numpy.fft import fft2, ifft2, fftshift, ifftshift
+
+from skimage.feature import peak_local_max
+from skimage.restoration import denoise_wavelet
+
+__version__ = "1.1.0"
 __authors__ = ["Lorenzo Orsini","Elisa Mendels","Matteo Ceccanti", "Bianca Turini"]
 
 # NOTES
@@ -1105,396 +1110,920 @@ class snom():
 		
 		return	self.wavelength, np.mean(np.mean(self.map, axis=0)), mean_background, std_background, 
 
-# --------------------------------------------- FUNCTIONS --------------------------------------------- #
-# Normalization
+	# FFT analysis functions
 
-def show_normalization_data(power_data, snom_scan, save = False, savedir = "Figures/normalization_data", add_save = ""): 
-	# power_data is the intensities
-	# snom_scan is the snom object created by the scan 
-	# -------- goal : show the full power map
+	def fft_2D(self):
+		"""
+		Perform 2D FFT on self.map and adapt coordinates.
+		- Computes FFT resolution from x,y spacing
+		- Applies 2D FFT and shift
+		- Updates reciprocal-space coordinates
+		- Optional log scaling of FFT intensity
+		"""
 
-	x = snom_scan.x
-	freq = snom_scan.y
+		# FFT resolutions
+		dx = self.x[1] - self.x[0]
+		dy = self.y[1] - self.y[0]
+		qx_max = 1/(2*dx)
+		qy_max = 1/(2*dy)
 
-	x_trimmed = x[:power_data.shape[1]]
-	freq_trimmed = freq[:power_data.shape[0]]
+		# 2D FFT + shift
+		fft_map = np.fft.fftshift(np.fft.fft2(np.abs(self.map)))
 
-	plot_maps(x_trimmed, freq_trimmed, power_data, save, savedir, f"normalization_data_{add_save}")
+		# Update map
+		self.map = fft_map
 
-	#power_data_normalized = power_data/power_data[]
+		# Reciprocal coordinates
+		self.x = np.linspace(-qx_max, qx_max, self.map.shape[1])
+		self.y = np.linspace(-qy_max, qy_max, self.map.shape[0])
+		self.X, self.Y = np.meshgrid(self.x, self.y)
 
+		self.fft2D_flag = True
 
-def I_avg_freq_dependancy(power_data, snom_scan, num_pixel=1,
-                          list_SNOM_signal=["O1", "O2", "O3", "O4"], normalized_signal = True,
-                          save=False, savedir="Figures/normalization_data",
-                          add_save=""):
+		return self
 
-	x = snom_scan.x
-	freq = snom_scan.y
+	def inverse_fft_2D(self):
+		dx = 1/(2*self.x[-1])
+		dy = 1/(2*self.y[-1])
+		x_max = dx*self.map.shape[1]
+		y_max = dy*self.map.shape[0]
 
-	x_trimmed = x[:num_pixel]
-	freq_trimmed = freq[:power_data.shape[0]]
-	power_data_trimmed = power_data[:, :num_pixel]
+		self.x = np.linspace(0, x_max, self.map.shape[1])
+		self.y = np.linspace(0, y_max, self.map.shape[0])
+		self.X, self.Y = np.meshgrid(self.x, self.y)
 
-	I_means = np.mean(power_data_trimmed, axis=1)
-	I_stds  = np.std(power_data_trimmed, axis=1)
+		ifft_map =  ifft2(ifftshift(self.map))
+		self.map = ifft_map
 
-	if normalized_signal:
-		I_means = I_means/np.max(I_means)
+		self.fft2D_flag = False
 
-	all_I_means = [I_means]
-	all_I_stds  = [I_stds]
+		return self
 
-	I_plot_percentage_variation(freq_trimmed, I_means, I_stds, label="Power Data")
+	def plot_kx_modes_circles_on_2Dfft(self, thickness, freq_cm1, modes=(0, 1),
+		epsilon_minus=2.3, hbn_type=10, n_theta=500, plot_2k_mode=False,
+		vmax=None, vmin=None, cres=1000, xlim=None, ylim=None, aspect="equal",
+		colors=None, labels=None, show=True, logscale = True, cmap = "viridis", use_imshow = False):
 
+		# Plot FFT map
+		self.plot(
+			vmax=vmax, vmin=vmin, cres=cres,
+			xlim=xlim, ylim=ylim,
+			pixel=False, show=False, save=False,
+			data_type="fft", aspect=aspect, logscale= logscale,
+			cmap=cmap, use_imshow = use_imshow
+		)
 
-	# Loop over SNOM channels
-	for sig in list_SNOM_signal:
-		I_Oi = np.abs(snom_scan.channel(sig).map)
-		I_Oi_trimmed = I_Oi[:power_data.shape[0], :num_pixel]
+		fig = plt.gcf()
+		ax = plt.gca()
 
-		I_means_Oi = np.mean(I_Oi_trimmed, axis=1)
-		I_stds_Oi  = np.std(I_Oi_trimmed, axis=1)
+		# Overlay circles
+		_, labels = plot_kx_circles(ax, thickness, freq_cm1, modes,
+										epsilon_minus, hbn_type, n_theta,
+										colors, labels, plot_2k_mode)
+		ax.set_xlim([self.x.min(), self.x.max()])
+		ax.set_ylim([self.y.min(), self.y.max()])
+		if xlim is not None: ax.set_xlim(xlim)
+		if ylim is not None: ax.set_ylim(ylim)
+		ax.legend(frameon=False, labelcolor='white', loc = "upper right")
 
-		if normalized_signal: 
-			I_means_Oi = I_means_Oi/np.max(I_means_Oi)
+		if show:
+			plt.tight_layout()
+			plt.show()
+		return self    
 
-		all_I_means.append(I_means_Oi)
-		all_I_stds.append(I_stds_Oi)
+	def plot_kx_on_1Dfft(self, thickness, modes, hbn_type, epsilon_minus,
+				x_lim = None, y_lim = None, vmax = None, cres = 200, savepath = None):
+		"""
+		Plot SNOM FFT data and overlay theoretical dispersion curves for multiple mode orders.
 
-		plots_I_avg_freq_dependancy(x_trimmed, freq_trimmed,[I_means_Oi], [I_stds_Oi], labels = [sig], std_activated= False, save = save ,name = sig + " mean intensity in function of the frequency "+f"{add_save}")
+		Parameters
+		----------
+		snom_data : object
+			SNOM dataset object with a .plot(...) method.
+		thickness : float
+			Layer thickness in meters (e.g. 38e-9).
+		n_list : list of int
+			Mode indices for theoretical calculation (e.g. [0, 1, 2]).
+		hbn_type : int
+			hBN type parameter for sp.k_x_theoretical.
+		epsilon_minus : float
+			Substrate dielectric constant (e.g. 1.5 for SiO2).
+		freq_min, freq_max : float
+			Frequency range in cm^-1.
+		df : float
+			Frequency step size.
+		x_lim, y_lim : tuple
+			Axis limits for kx (µm^-1) and frequency (cm^-1).
+		vmax, cres : float
+			Plotting parameters for snom_data.plot.
+		savepath : str or None
+			If given, path to save the figure (e.g. "Figures/snom_data/fft_with_theory.png").
+		"""
 
-		plot_I_std_freq(x_trimmed, freq_trimmed, I_means_Oi, I_stds_Oi)
+		# Plot FFT data
+		self.plot(
+			vmax=vmax, cres=cres, xlim=x_lim, ylim=y_lim,
+			pixel=False, show=False, save=False,
+			data_type="fft"
+		)
+		fig = plt.gcf()
+		ax = plt.gca()
 
-	plots_I_avg_freq_dependancy(x_trimmed, freq_trimmed,
-								[I_means], [I_stds], std_activated= False, labels = ["power data"],save = save ,name= "Power mean intensity in function of the frequency "+f"{add_save}")
+		# Overlay theoretical curves for each mode order
+		for n in modes:
+			k_x_theoretical_ = k_x_theoretical(new_freqs= self.y, thickness=thickness, n=n, hbn_type=hbn_type,
+												epsilon_minus=epsilon_minus, plot=False)
+			k_x_theoretical_plot = np.real(k_x_theoretical_) * 1e-6  # µm^-1
 
-	# Convert lists to 2D numpy arrays: shape = (n_signals, n_freqs)
-	all_I_means = np.vstack(all_I_means)
-	all_I_stds  = np.vstack(all_I_stds)
+			ax.plot(k_x_theoretical_plot, self.y, lw=2.5, label=f"Re($k_x$), n={n}, $\epsilon_-$={epsilon_minus:.2f}")
+			ax.plot(2*k_x_theoretical_plot, self.y, lw=2.5, linestyle="--", label=f"2 Re($k_x$), n={n}" )
 
-	plots_I_avg_freq_dependancy(x_trimmed, freq_trimmed,
-								all_I_means, all_I_stds, labels = ["power data "]+ list_SNOM_signal, std_activated=False, name =  "Comparison of mean intesities "+f"{add_save}"+" ".join(list_SNOM_signal)+" power data")
+		ax.legend(fontsize=12,loc = "upper right")
+		ax.set_xlim(x_lim)
+		ax.set_ylim(y_lim)
 
-	return freq_trimmed, all_I_means, all_I_stds
-	
+		fig.tight_layout()
+		if savepath:
+			fig.savefig(savepath, dpi=300)
+			plt.close(fig)
+		else:
+			plt.show()    
+		return self
 
-# maps division	
-def Oi_power_data_maps_division(power_data, snom_scan, num_pixel = 1,list_SNOM_signal=["O1", "O2", "O3", "O4"], save = False, savedir = "Figures", add_save = ""):
-	x = snom_scan.x
-	freq = snom_scan.y
+	def filtering_real_space(self, mask_func, mask_args=(), mask_kwargs=None,
+		thickness=None, modes=(0,1), epsilon_minus=2.3, hbn_type=10, plot = False, plot_circles=False, plot_2k_mode=False,
+			vmin = None, vmax = None, logscale = True, use_imshow = False):
+		"""Apply FFT, filter with a mask, and plot results with *snompy*-style formatting."""
 
-	x_trimmed = x[:num_pixel]
-	freq_trimmed = freq[:power_data.shape[0]]
-	power_data_trimmed = power_data[:, :num_pixel]
+		
+		if mask_kwargs is None:
+			mask_kwargs = {}
 
-	plot_maps(x_trimmed, freq_trimmed, power_data_trimmed)
+		### --- filtering functions ----- 
+		dx, dy = self.x[1] - self.x[0], self.y[1] - self.y[0]
 
-	I_means = np.mean(power_data_trimmed, axis=1)
-	I_means = I_means[:, None] # to enable the division of each scan by the I mean at each frequency
+		self.fft_2D()
+		
+		if plot: 
+			if plot_circles: 
+				self.plot_kx_modes_circles_on_2Dfft(thickness=thickness, freq_cm1= self.wavelength, epsilon_minus=epsilon_minus,
+													hbn_type=hbn_type, plot_2k_mode=plot_2k_mode, vmin=vmin, vmax=vmax, logscale=logscale, use_imshow = use_imshow)
+			else:
+				self.plot(logscale=True, vmin = vmin , vmax = vmax)
 
-	for sig in list_SNOM_signal:
-		I_Oi = np.abs(snom_scan.channel(sig).map)
-		I_Oi_trimmed = I_Oi[:power_data.shape[0], :num_pixel]
+		mask = mask_func(self.map.shape, dx=dx, dy=dy, *mask_args, **mask_kwargs)
 
-		plot_maps(x_trimmed, freq_trimmed, I_Oi_trimmed)
+		if plot: 
+			fig, ax = plt.subplots(figsize=(6, 5))
+			im = ax.imshow(mask, cmap="gray", extent=[self.x.min(), self.x.max(), self.y.min(), self.y.max()], 
+							origin="lower")
+			ax.set_title("Mask")
+			ax.set_xlabel(r"$q_x$ ($\mu$m$^{-1}$)", fontsize=18)
+			ax.set_ylabel(r"$q_y$ ($\mu$m$^{-1}$)", fontsize=18)
+			ax.tick_params(axis="both", which="major", labelsize=16)
 
-		print((I_means))
+			if plot_circles:
+				_, labels = plot_kx_circles(ax, thickness, self.wavelength, modes, epsilon_minus, hbn_type,
+											plot_2k_mode=plot_2k_mode)
+				ax.legend(frameon=True, bbox_to_anchor=(1.2, 1), loc='upper left')
 
-		I_Oi_over_power = I_Oi_trimmed/I_means # indeed as std of 3 percent in the I mean, then can use it like this (consider variation negligable)
-		I_Oi_full_matrix_over_power = I_Oi_trimmed/power_data_trimmed
+			cbar = fig.colorbar(im, ax=ax, shrink=0.8)
+			cbar.ax.set_ylabel("Intensity")
 
-		plot_maps(x_trimmed, freq_trimmed, I_Oi_over_power, save= save ,savedir = savedir ,name= sig+" signal divided by mean power "+f"{add_save}")
-		plot_maps(x_trimmed, freq_trimmed, I_Oi_full_matrix_over_power , save= save, savedir = savedir , name = sig +" full matrix division by power data "+f"{add_save}")
-
-# plot functions
-def plot_maps(x, f, I_map, save = False, savedir = "Figures", name = ""):
-
-	##### plots 
-	plt.figure(figsize=(8,6))
-	extent = [x[0], x[-1], f[0], f[-1]]
-	im = plt.imshow(I_map, cmap='hot', origin='lower', aspect='auto', extent=extent)
-
-	# Add a colorbar to show intensity values
-	cbar = plt.colorbar(im)
-	cbar.set_label("Intensity", fontsize=16)   # colorbar label fontsize
-	cbar.ax.tick_params(labelsize=18)   
-
-	# Label axes with custom font sizes
-	plt.xlabel("$x$ ($\\mu$m)", fontsize=16)   # x-axis label size 16
-	plt.ylabel("$f$ (cm$^{-1}$)", fontsize=16) # y-axis label size 16
-	plt.title(f"{name}", fontsize=12) # title size 12
-
-	# Set tick label font sizes
-	plt.xticks(fontsize=18)
-	plt.yticks(fontsize=18)
-
-	# saving the files
-	if save:
-		name_save = name.replace(" ", "_")	
-
-		file_name = f"{name_save}.png"
-		file_path = os.path.join(savedir, file_name)
-		os.makedirs(os.path.dirname(file_path), exist_ok=True)
-		plt.savefig(file_path, dpi=300, transparent=True, bbox_inches='tight')
-
-	plt.show()
-
-
-def plots_I_avg_freq_dependancy(x,f, I_means_list, I_stds_list, labels,std_activated = True, save = False , name = "", savedir = "Figures"):
-
-	plt.figure(figsize=(5,8))
-	for i in range(len(I_means_list)):
-		plt.plot(I_means_list[i],f, label="Mean "+labels[i])
-		if std_activated :
-			plt.fill_between(
-				f,
-				I_means_list[i] - I_stds_list[i],
-				I_means_list[i] + I_stds_list[i],
-				color="blue",
-				alpha=0.3,   # transparency
-				label="± std "+labels[i]
-			)
-
-	plt.ylabel("Frequency", fontsize = 16)
-	plt.xlabel("Intensity", fontsize = 16)
-	plt.legend()
-	plt.title(f"{name}", fontsize = 14)
-	plt.grid(True, linestyle="--", alpha=0.6)  # optional, makes it easier to read
-
-	plt.xticks(fontsize=18)
-	plt.yticks(fontsize=18)
-
-	plt.tight_layout()
-
-	if save:
-		name_save = name.replace(" ", "_")	
-
-		file_name = f"{name_save}.png"
-		file_path = os.path.join(savedir, file_name)
-		os.makedirs(os.path.dirname(file_path), exist_ok=True)
-		plt.savefig(file_path, dpi=300, transparent=True, bbox_inches='tight')
-
-	plt.show()
-
-
-
-def plot_I_std_freq(x,f,I_means, I_stds):
-
-	plt.figure(figsize=(8,5))
-	plt.plot(f, I_stds)
-
-	plt.xlabel("Frequency")
-	plt.ylabel("Std. deviation")
-	plt.title("Laser Signal Variability")
-	plt.grid(True, linestyle="--", alpha=0.6)  # optional, makes it easier to read
-	plt.tight_layout()
-	plt.show()
-
-def I_plot_percentage_variation(freq, I_means, I_stds, label="Signal"):
-    percentage_variation = (I_stds / I_means) * 100
-
-    plt.figure(figsize=(8,5))
-    plt.plot(freq, percentage_variation, label=label)
-    plt.xlabel("Frequency")
-    plt.ylabel("Percentage Variation ($\%$)")
-    plt.title(f"{label} - Percentage Variation vs Frequency")
-    plt.grid(True, linestyle="--", alpha=0.6)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-# sSNOM Data analysis
-def peak_spacing_in_SNOM(snom_data, mesure_position ,pixel_range = [1], plot = False, saveindex = [], savedir = "Figures"):
-	peak_distances = []
-	for i in pixel_range:
-		section_at_i = [snom_data.x, np.abs(snom_data.map[i, :][:])] # gives x and Oi signal
-		peaks, properties = find_peaks(savgol_filter(section_at_i[1], window_length=11, polyorder=3), height=0 )
-		if plot:
-			plt.figure()
-			plt.plot(section_at_i[0], section_at_i[1])
-			plt.plot(section_at_i[0][peaks], section_at_i[1][peaks], '.')
-			plt.xlim(mesure_position)
-			plt.xlabel("$x$ ($\mu$m)")
-			plt.ylabel("I (u.a.)")
-			name_save = f"{i}, {snom_data.y[i]}"+"cm$^{-1}$ oscillations in hBN"
-			plt.title(name_save)
-			plt.grid(True, linestyle="--", alpha=0.6)  # optional, makes it easier to read
-
+			ax.set_xlim(self.x.min(), self.x.max())
+			ax.set_ylim(self.y.min(), self.y.max())
 			
-			if i in saveindex:
-				name_save = name_save.replace(" ", "_")	
-				file_name = f"{name_save}.png"
-				file_path = os.path.join(savedir, file_name)
-				os.makedirs(os.path.dirname(file_path), exist_ok=True)
-				plt.savefig(file_path, dpi=300, transparent=True, bbox_inches='tight')
+			plt.tight_layout()
 			plt.show()
 
+		masked_fft = self.map * mask
+		self.map = masked_fft
+			
+		if plot: 
+			if plot_circles: 
+				self.plot_kx_modes_circles_on_2Dfft(thickness=thickness, freq_cm1= self.wavelength, epsilon_minus=epsilon_minus,
+													hbn_type=hbn_type, plot_2k_mode=plot_2k_mode, logscale=logscale,
+													cmap = "inferno", use_imshow=use_imshow) #vmin=vmin, vmax=vmax,
+			else:
+				self.plot(logscale=True, vmin = vmin , vmax = vmax)
 
-		peaks_in_range = [p for p in peaks if mesure_position[0] <= section_at_i[0][p] <= mesure_position[1]]
+		self.inverse_fft_2D()
 
-		diff_1a2 = (section_at_i[0][peaks_in_range[-1]]-section_at_i[0][peaks_in_range[-2]])
-		diff_2a3 = (section_at_i[0][peaks_in_range[-2]]-section_at_i[0][peaks_in_range[-3]])
+		if plot: 
+			self.plot(cmap = "hot", use_imshow=use_imshow)
 
-		if section_at_i[1][peaks_in_range[-1]] < section_at_i[1][peaks_in_range[-2]]:
-			mean_peak_distance = (diff_2a3 +(section_at_i[0][peaks_in_range[-3]]-section_at_i[0][peaks_in_range[-4]]))/2
-			#mean_peak_distance = diff_2a3
-			#print(f"peak {i} ")
-		else:
-			mean_peak_distance = (diff_1a2 + diff_2a3)/2
-			#mean_peak_distance = diff_1a2
+		return self        
 
-		peak_distances = peak_distances + [mean_peak_distance]
+	def findpeaks_2DFFT(self, mindistance_peaks, threshold, denoising = True, plot = True):
+		data = np.log1p(np.abs(self.map))   # carte FFT déjà calculée
 
-	return peak_distances	
+		if denoising:
+			data = denoise_wavelet(data, method='BayesShrink', mode='hard')
 
+		coordinates = peak_local_max(
+				data,
+				min_distance=mindistance_peaks,
+				threshold_rel=threshold,
+				exclude_border=False
+			)    
 
-def plot_peak_spacing(peak_distances, snom_data, good_index_list, thickness,n , plot = True, save = False):
-	if plot:
-		plt.figure(figsize=(8,6))
-		plt.plot(peak_distances,( snom_data.y[good_index_list]), '.') 
-		plt.xlabel("Mean peak difference ($\mu$m)", fontsize = 16)
-		plt.ylabel("Wavenumber (cm$^{-1}$)", fontsize = 16)
-		plt.xticks(fontsize=18)
-		plt.yticks(fontsize=18)
-		plt.grid(True, linestyle="--", alpha=0.6)  # optional, makes it easier to read
-		plt.tight_layout()
-		plt.show()
-	
-	q = np.array([1/x for x in peak_distances])*2*np.pi/2 # to have actual wavevector
-	new_freqs = np.array(snom_data.y[good_index_list])
+		peak_qx = self.x[coordinates[:, 1]] # column → x 
+		peak_qy = self.y[coordinates[:, 0]]
+		peaks = np.column_stack((peak_qx, peak_qy))
 
-	m_fit, b_fit = np.polyfit(q, new_freqs, 1)
+		# --- Plot ---
+		if plot:
+			# extent_q = [self.x.min(), self.x.max(), self.y.min(), self.y.max()]
 
-	# fit part in h11BN for thickness
-	epsilon_xx = 5.32 * (1.+ (((1608.8)**2 -1359.8**2)/(1359.8**2 - new_freqs**2. - 1j * new_freqs* 2.1)))
-	epsilon_zz = 3.15 * (1.+ (((814)**2 -785.**2)/(785.**2 - new_freqs**2. - 1j * new_freqs* 1.)))
+			# fig, ax = plt.subplots(figsize=(6, 5))
+			# im = ax.imshow(data, cmap='viridis', origin='lower', aspect='auto', extent = extent_q)
+			self.plot( aspect='auto', show = False, logscale=True)
+			fig = plt.gcf()
+			ax = plt.gca()
+			ax.plot(peak_qx, peak_qy, 'r+', markersize=10, label="Peaks détectés")
+			ax.legend()
+			plt.show()  
 
-	epsilon_minus = -10000. #(gold)
-	epsilon_plus = 1. # air
+		return peaks
 
-	phi = np.sqrt(- epsilon_xx/epsilon_zz +0j)
+# --------------------------------------------- FUNCTIONS --------------------------------------------- #
 
-	r_plus = (epsilon_xx - 1j * epsilon_plus * phi)/(epsilon_xx + 1j * epsilon_plus * phi)
+# theoretical computation of modes of hPhPs in hBN 10 or 11
+def k_x_theoretical(thickness, n, new_freqs, epsilon_minus = -10000 , hbn_type = 11, plot=False):
+
+	if hbn_type == 11:
+		# fit part in h11BN for thickness 
+		epsilon_xx = 5.32 * (1.+ (((1608.8)**2 -1359.8**2)/(1359.8**2 - new_freqs**2. - 1j * new_freqs* 2.1))) 
+		epsilon_zz = 3.15 * (1.+ (((814)**2 -755.**2)/(755.**2 - new_freqs**2. - 1j * new_freqs* 1.)))
+
+	if hbn_type == 10:
+		# dielectric functions (example: h10BN)
+		epsilon_xx = 5.1 * (1.+ (((1650)**2 -1394.5**2)/(1394.5**2 - new_freqs**2 - 1j * new_freqs*1.8)))
+		epsilon_zz = 2.5 * (1.+ (((845)**2 -785.**2)/(785.**2 - new_freqs**2 - 1j * new_freqs* 1.)))
+
+	# surrounding media
+	#epsilon_minus = -10000 # gold
+	#epsilon_minus = 1.17**2   # SiO2
+	epsilon_plus = 1.0        # air
+
+	# anisotropy factor
+	phi = np.sqrt(-epsilon_xx/epsilon_zz + 0j)
+
+	# reflection coefficients
+	r_plus  = (epsilon_xx - 1j * epsilon_plus * phi)/(epsilon_xx + 1j * epsilon_plus * phi)
 	r_minus = (epsilon_xx - 1j * epsilon_minus * phi)/(epsilon_xx + 1j * epsilon_minus * phi)
 
-	rho_plus = np.unwrap(np.angle(r_plus), discont=np.pi) * (1/np.pi)
-	rho_minus = np.unwrap(np.angle(r_minus), discont=np.pi) * (1/np.pi)
+	# phases
+	rho_plus  = np.angle(r_plus) * (1/np.pi)
+	rho_minus = np.angle(r_minus) * (1/np.pi)
 
+	# full complex kz (include imaginary term!)
 	k_z_real = (np.pi / (2*thickness)) * (2*n + rho_plus + rho_minus)
-	#k_z_imag = (1j / (2*thickness)) * np.log(np.abs(r_plus) * np.abs(r_minus))
-	k_z = k_z_real #+ k_z_imag
-	wavenumber_k_x =( k_z / phi )* 1e-4
-	k_x_theoretical = np.real(wavenumber_k_x)   # Convert cm⁻¹ to μm⁻¹
+	k_z_imag = (1j / (2*thickness)) * np.log(np.abs(r_plus) * np.abs(r_minus))
+	k_z = k_z_real + k_z_imag
+
+	# --- PROPER COMPLEX DIVISION ---
+	# Instead of k_z/phi, do the full complex division:
+	numerator   = (np.real(k_z)*np.real(phi) + np.imag(k_z)*np.imag(phi)) \
+				+ 1j*(-np.real(k_z)*np.imag(phi) + np.imag(k_z)*np.real(phi))
+
+	denominator = np.abs(phi)**2
+	wavenumber_k_x = numerator / denominator
+
+	# Convert from wavevector (rad/m) to spatial frequency (cycles/m)
+	k_x_theoretical = wavenumber_k_x /(2*np.pi)
 
 	if plot:
 		plt.figure(figsize=(8,6))
-		plt.plot(q,new_freqs, '.', label = "data") 
-		#plt.plot(q, m_fit*q + b_fit, '-', label = f"fit: ${m_fit:.3f}x + {b_fit:.3f}$")
-
-		plt.plot( k_x_theoretical, new_freqs , label = f"Computed t={(thickness*1e7):.1f} nm")
-
-		plt.xlabel("Fringes Wavevector (\mum^{-1} \cdot 2 \pi /2)", fontsize = 16)
-		plt.ylabel("Wavenumber (cm^{-1})", fontsize = 16)
+		plt.plot(np.real(k_x_theoretical), new_freqs, label=f"t={(thickness*1e9):.1f} nm")
+		plt.xlabel("Fringes Wavevector (m$^{-1}$)", fontsize=16)
+		plt.ylabel("Wavenumber (cm$^{-1}$)", fontsize=16)
 		plt.xticks(fontsize=18)
 		plt.yticks(fontsize=18)
 		plt.legend()
-		plt.grid(True, linestyle="--", alpha=0.6)  # optional, makes it easier to read
+		plt.grid(True, linestyle="--", alpha=0.6)
 		plt.tight_layout()
 		plt.show()
 
-	return m_fit, b_fit, wavenumber_k_x, new_freqs
+	return k_x_theoretical
 
+# Spacing between frignes peaks analysis
+def peak_spacing_in_SNOM(
+	snom_data,
+	measure_position,
+	pixel_range=[1],
+	plot=False,
+	saveindex=None,
+	savedir="Figures",
+	window_length=11,
+	polyorder=3,
+	highest_side="right",
+	height_factor=0.05,
+	return_peaks=False,
+):
+	"""
+	Compute mean peak spacing (in µm) for SNOM line profiles.
 
-def prepare_data(i, data, measure_position=(2, 3.01)):
-    """Extract, slice, flip, and normalize data for index i."""
-    print(f"Raw y[{i}]: {data.y[i]}")
-    x, y = data.x, data.map[i, :]
+	Parameters
+	----------
+	snom_data : object
+		Must contain snom_data.x (µm), snom_data.y (cm⁻¹), snom_data.map[pixel, x].
+	measure_position : tuple
+		(xmin, xmax) in µm defining the window where peaks are considered.
+	pixel_range : list
+		List of pixel indices to analyze.
+	highest_side : str
+		"left" or "right". Indicates where the highest-amplitude peak is expected.
+	height_factor : float
+		Fraction of peak prominence relative to signal amplitude.
+	return_peaks : bool
+		If True, also return detected peak positions for debugging.
 
-    # Select measurement window
-    mask = (x >= measure_position[0]) & (x <= measure_position[1])
-    x, y = x[mask], y[mask]
+	Returns
+	-------
+	peak_distances : list of floats
+		Mean peak spacing for each pixel (in µm).
+	peak_positions (optional) : list of arrays
+		x positions of detected peaks.
+	"""
 
-    # Flip and normalize
-    y = np.flip(y)
-    x = x - x[0] + 1e-4
-    return x, y
+	if saveindex is None:
+		saveindex = []
 
-def fit_fringes(x, y, qr, qi, plot=True):
-    """Fit the fringes model and optionally plot results."""
+	peak_distances = []
+	all_peak_positions = []
 
-    def fringes(x, A, B, C, loss, phi):
-        return (A * np.sin(2*qr*x + phi) * np.exp(-2*qi*loss*x) / np.sqrt(x)
-              + B * np.sin(qr*x + phi) * np.exp(-qi*loss*x) / np.sqrt(x**3)
-              + C)
+	x_vals = snom_data.x
 
-    popt, _ = curve_fit(
-        fringes, x, np.real(y),
-        p0=[1, 0.1, 0.5, 1, 0.5],
-        bounds=([-100., -10000., -10., 1, -2*np.pi],
-                [100., 10000., 10., 6., 2*np.pi]),
-        maxfev=1_000_000
-    )
+	for i in pixel_range:
+		y_vals = np.abs(snom_data.map[i, :])
 
-    print(f"A:    {popt[0]:.1f}")
-    print(f"B:    {popt[1]:.1f}")
-    print(f"C:    {popt[2]:.1f}")
-    print(f"loss: {popt[3]:.1f}")
-    print(f"phi:  {popt[4]*180/np.pi:.1f}")
+		# Smooth signal
+		smoothed = savgol_filter(y_vals, window_length=window_length, polyorder=polyorder)
+		amplitude = np.max(smoothed) - np.min(smoothed)
 
-    if plot:
-        y_fit = fringes(x, *popt)
-        plt.figure(figsize=(10, 5))
-        plt.plot(x, np.real(y), '.', label='Data (Real)', alpha=0.5)
-        plt.plot(x, np.real(y_fit), '-', label='Fit (Real)', linewidth=2)
-        plt.xlabel("x")
-        plt.ylabel("Re(y)")
-        plt.legend()
-        plt.tight_layout()
-        plt.show()
+		# Peak detection
+		peaks, _ = find_peaks(smoothed, prominence=amplitude * height_factor)
 
-    return popt
+		# Keep only peaks inside measurement window
+		peaks_in_range = [p for p in peaks if measure_position[0] <= x_vals[p] <= measure_position[1]]
+		all_peak_positions.append(x_vals[peaks_in_range])
 
+		if len(peaks_in_range) < 3:
+			peak_distances.append(np.nan)
+			continue
 
-def fit_peaks_model(x, y, plot=True):
-	"""Detect peaks, fit sqrt(x) model, and optionally plot results."""
+		# Compute consecutive spacings
+		diffs = np.diff(x_vals[peaks_in_range])  # spacing between consecutive peaks
 
-	peaks, _ = find_peaks(savgol_filter(y, window_length=11, polyorder=3), height=0)
+		# Direction-aware averaging
+		if highest_side == "left":
+			# Highest peak on left → decay to the right
+			if len(peaks_in_range) >= 4 and y_vals[peaks_in_range[-1]] < y_vals[peaks_in_range[-2]]:
+				mean_spacing = np.mean(diffs[-3:-1])
+			else:
+				mean_spacing = np.mean(diffs[-2:])
+		else:
+			# Highest peak on right → decay to the left
+			if len(peaks_in_range) >= 4 and y_vals[peaks_in_range[0]] < y_vals[peaks_in_range[1]]:
+				mean_spacing = np.mean(diffs[:2])
+			else:
+				mean_spacing = np.mean(diffs[-2:])
 
-	def model(x, a, b):
-		return a / np.sqrt(x**3) + b
+		peak_distances.append(mean_spacing)
 
-	params, _ = curve_fit(model, x[peaks], np.real(y[peaks]), p0=[1, 0])
-	a_fit, b_fit = params
-	print(f"Fitted parameters: a = {a_fit:.3f}, b = {b_fit:.3f}")
+		# Optional plotting
+		if plot:
+			plt.figure(figsize=(7,4))
+			plt.plot(x_vals, y_vals, label="Raw", alpha=0.6)
+			plt.plot(x_vals, smoothed, label=f"Smoothed (window={window_length})", color="grey")
+			plt.plot(x_vals[peaks], smoothed[peaks], "o", label="Detected peaks")
+			plt.xlim(measure_position)
+			plt.xlabel("x (µm)")
+			plt.ylabel("I (a.u.)")
+			plt.title(f"Pixel {i} — {snom_data.y[i]} cm-1")
+			plt.grid(True, linestyle="--", alpha=0.5)
+			plt.legend()
+
+			if i in saveindex:
+				os.makedirs(savedir, exist_ok=True)
+				fname = f"{i}_{snom_data.y[i]}_highest_{highest_side}".replace(" ", "_")
+				plt.savefig(os.path.join(savedir, f"{fname}.png"), dpi=300, transparent=True)
+
+			plt.show()
+
+	if return_peaks:
+		return peak_distances, all_peak_positions
+	return peak_distances
+
+def plot_peak_spacing(
+	peak_distances,
+	snom_data,
+	good_index_list,
+	thickness,
+	n,
+	hbn_type,
+	epsilon_minus,
+	plot=True,
+	save=False,
+	polariton_type="reflected",
+):
+	"""
+	Convert peak spacing (µm) into spatial frequency q (µm⁻¹),
+	compare with theoretical kx dispersion, and optionally plot.
+
+	Returns
+	-------
+	kx_theory_plot : array
+		Theoretical wavevector (µm⁻¹) for plotting.
+	freqs : array
+		Frequencies (cm⁻¹) corresponding to the selected pixels.
+	"""
+
+	freqs = np.array(snom_data.y[good_index_list])
+	peak_distances = np.array(peak_distances)
+
+	# Convert spacing → spatial frequency q = 1/Δx
+	q_exp = 1 / peak_distances  # µm⁻¹
+
+	# Compute theoretical kx
+	kx = k_x_theoretical(thickness, n, freqs, hbn_type=hbn_type,
+						epsilon_minus=epsilon_minus, plot=False)
+	kx = np.real(kx) * 1e-6  # convert from m⁻¹ to µm⁻¹
+
+	if polariton_type == "reflected":
+		kx_plot = 2 * kx  # q_fringes = 2 Re(kx)
+	else:
+		kx_plot = kx
 
 	if plot:
-		plt.figure(figsize=(8, 6))
-		plt.plot(x, np.real(y), '.', label="Data")
-		plt.plot(x[peaks], np.real(y[peaks]), '.', label="Peaks")
-		plt.plot(x, model(x, a_fit, b_fit), color="red", label=r"$1/\sqrt{x^3}$ Fit")
-		plt.xlabel("x")
-		#plt.xlim([0.1,1])
-		plt.ylim([0.75,1.25])
-		plt.ylabel("y")
-		plt.legend()
+		# Experimental spacing vs frequency
+		plt.figure(figsize=(7,5))
+		plt.plot(peak_distances, freqs, "o")
+		plt.xlabel("Mean peak spacing delta x (um)")
+		plt.ylabel("Wavenumber (cm-1)")
+		plt.grid(True, linestyle="--", alpha=0.5)
 		plt.tight_layout()
 		plt.show()
 
-	return a_fit, b_fit
+		# Dispersion plot
+		plt.figure(figsize=(7,5))
+		plt.plot(q_exp, freqs, "o", label="Experimental q")
+		plt.plot(kx_plot, freqs, "-", label=f"Theory (t={thickness*1e9:.1f} nm)")
+		plt.xlabel("Wavevector q (um-1)")
+		plt.ylabel("Wavenumber (cm-1)")
+		plt.legend()
+		plt.grid(True, linestyle="--", alpha=0.5)
+		plt.tight_layout()
+		plt.show()
 
-def analyze_fringes(i, data, k_x_theoretical, measure_position=(2, 3.01), plot=True):
-	"""Main wrapper: prepares data, fits fringes, and fits peaks model."""
-	x, y = prepare_data(i, data, measure_position)
+	return kx_plot, freqs
+
+# Fit of a single fringe
+def savitzky_golay_smooth(y, window_length=11, polyorder=3):
+	"""Apply Savitzky-Golay smoothing filter to data."""
+	# Ensure window_length is odd and valid
+	if window_length % 2 == 0:
+		window_length += 1
+	if window_length > len(y):
+		window_length = len(y) if len(y) % 2 == 1 else len(y) - 1
+	if polyorder >= window_length:
+		polyorder = window_length - 1
+
+	return savgol_filter(y, window_length=window_length, polyorder=polyorder)
+
+def analyze_fringes(i, data, k_x_theoretical, measure_position, highest_side="right", plot=True, smooth=False, window_length=11, polyorder=3):
+
+	def fit_fringes_data_prep(i, data, measure_position, highest_side="right", smooth=False, window_length=11, polyorder=3):
+		"""Extract, slice, flip, and optionally smooth data for index i. Returns (x, y, y_original) if smooth=True, else (x, y, None)."""
+		print(f"Raw y[{i}]: {data.y[i]}")
+		x, y = data.x, (data.map[i, :])
+		print(f"x: {x}", np.isnan(x).sum())
+
+		# Select measurement window
+		mask = (x >= measure_position[0]) & (x <= measure_position[1])
+		x, y = x[mask], y[mask]
+
+		# Flip and normalize
+		if highest_side == "left":
+			y = np.flip(y)
+		else:
+			y = y        
+		x = x - x[0] + 1e-4
+		
+		# Apply Savitzky-Golay smoothing
+		y_original = None
+		if smooth:
+			y_original = y.copy()  # Keep original for plotting
+			y = savitzky_golay_smooth(y, window_length=window_length, polyorder=polyorder)
+			print(f"Applied Savitzky-Golay smoothing: window_length={window_length}, polyorder={polyorder}")
+		
+		return x, y, y_original
+
+	def fit_fringes(x, y, qr, qi, plot=True, y_original=None):
+		"""Fit the fringes model and optionally plot results. Fits to y (smoothed), but plots both y_original and y if provided."""
+
+		def fringes(x, A, B, C, loss, phi):
+			return (A * np.sin(2*qr*x + phi) * np.exp(-2*qi*loss*x) / np.sqrt(x)
+				+ B * np.sin(qr*x + phi) * np.exp(-qi*loss*x) / np.sqrt(x**3)
+				+ C)
+
+		# Estimate adaptive initial parameters from data
+		y_real = np.real(y)
+		print(f"y_real: {x}", np.isnan(x).sum())
+		C_init = np.mean(y_real)  # Offset = mean
+		amplitude = (np.max(y_real) - np.min(y_real)) / 2  # Peak-to-peak amplitude
+		A_init = amplitude * np.sqrt(np.mean(x))  # Scale by sqrt(x) since model has 1/sqrt(x)
+		B_init = amplitude * np.mean(x)**1.5  # Scale by x^(3/2) since model has 1/sqrt(x^3)
+		loss_init = 1.0  # Default loss
+		phi_init = 0.0  # Default phase
+		
+		# Adaptive bounds based on data range
+		y_range = np.max(y_real) - np.min(y_real)
+		A_bound = max(100., abs(A_init) * 10)
+		B_bound = max(10000., abs(B_init) * 10)
+		C_bound = max(10., abs(C_init) + y_range)
+		
+		print(f"Initial params: A={A_init:.2f}, B={B_init:.2f}, C={C_init:.2f}, loss={loss_init:.2f}, phi={phi_init:.2f}")
+
+		try:
+			popt, _ = curve_fit(
+				fringes, x, y_real,
+				p0=[A_init, B_init, C_init, loss_init, phi_init],
+				bounds=([-A_bound, -B_bound, -C_bound, 0.01, -2*np.pi],
+						[A_bound, B_bound, C_bound, 10., 2*np.pi]),
+				maxfev=1_000_000
+			)
+		except RuntimeError as e:
+			print(f"Fit failed: {e}. Using initial parameters as result.")
+			popt = np.array([A_init, B_init, C_init, loss_init, phi_init])
+
+		print(f"A:    {popt[0]:.1f}")
+		print(f"B:    {popt[1]:.1f}")
+		print(f"C:    {popt[2]:.1f}")
+		print(f"loss: {popt[3]:.1f}")
+		print(f"phi:  {popt[4]*180/np.pi:.1f}")
+
+		print("ghello")
+		if plot:
+			y_fit = fringes(x, *popt)
+			plt.figure(figsize=(10, 5))
+			
+			# Plot original noisy data if available
+			if y_original is not None:
+				plt.plot(x, np.real(y_original), '.', label='Original Data', alpha=0.3, color='gray')
+				plt.plot(x, np.real(y), '.', label='Smoothed Data', alpha=0.7)
+			else:
+				plt.plot(x, np.real(y), '.', label='Data (Real)', alpha=0.5)
+			
+			plt.plot(x, np.real(y_fit), '-', label='Fit (Real)', linewidth=2, color='red')
+			plt.xlabel("x")
+			plt.ylabel("Re(y)")
+			plt.legend()
+			plt.tight_layout()
+			plt.show()
+
+		return popt
+
+	def fit_snom_1D_fringes(x, y, plot=True, y_original=None, window_length=11, polyorder=3):
+		"""Detect peaks, fit sqrt(x^3) model, and optionally plot results. Fits to y (smoothed), but plots both y_original and y if provided."""
+
+		# Find peaks on smoothed data (use same smoothing as for fringes fitting)
+		y_for_peaks = savitzky_golay_smooth(y, window_length=window_length, polyorder=polyorder)
+		peaks, _ = find_peaks(y_for_peaks, height=0)
+
+		def model(x, a, b):
+			return a / np.sqrt(x) + b
+
+		params, _ = curve_fit(model, x[peaks], np.real(y[peaks]), p0=[1, 0])
+		a_fit, b_fit = params
+		print(f"Fitted parameters: a = {a_fit:.3f}, b = {b_fit:.3f}")
+
+		if plot:
+			plt.figure(figsize=(8, 6))
+			
+			# Plot original noisy data if available
+			if y_original is not None:
+				plt.plot(x, np.real(y_original), '.', label="Original Data", alpha=0.3, color='gray')
+				plt.plot(x, np.real(y), '.', label="Smoothed Data", alpha=0.7)
+			else:
+				plt.plot(x, np.real(y), '.', label="Data")
+			
+			plt.plot(x[peaks], np.real(y[peaks]), '.', label="Peaks", markersize=10)
+			plt.plot(x, model(x, a_fit, b_fit), color="red", label=r"$1/\sqrt{x^3}$ Fit", linewidth=2)
+			plt.xlabel("x")
+			#plt.xlim([0.1,1])
+			plt.ylim([min(np.real(y))-0.1*min(np.real(y)),max(np.real(y))+0.1*max(np.real(y))])
+			plt.ylabel("y")
+			plt.legend()
+			plt.tight_layout()
+			plt.show()
+
+		return a_fit, b_fit
+
+	"""Main wrapper: prepares data, fits fringes, and fits peaks model. Set smooth=True to reduce noise and compare original vs smoothed."""
+	x, y, y_original = fit_fringes_data_prep(i, data, measure_position, highest_side, smooth=smooth, window_length=window_length, polyorder=polyorder)
 	qr, qi = np.real(k_x_theoretical[i]), np.imag(k_x_theoretical[i])
 
 	print("/n qr :",qr, " qi :", qi, "/n")
 
-	popt_fringes = fit_fringes(x, y, qr, qi, plot=plot)
-	popt_model = fit_peaks_model(x, y, plot=plot)
+	popt_fringes = fit_fringes(x, y, qr, qi, plot=plot, y_original=y_original)
+	popt_model = fit_snom_1D_fringes(x, y, plot=plot, y_original=y_original, window_length=window_length, polyorder=polyorder)
 
 	return popt_fringes, popt_model
 
+## 2D FFT
+
+def compute_kx_radii(thickness, freq_cm1, modes=(0,1), epsilon_minus=2.3, hbn_type=10):
+	"""
+	Compute theoretical k_x radii (in µm⁻¹) for given modes.
+
+	Parameters
+	----------
+	thickness : float
+		hBN thickness in meters.
+	freq_cm1 : float
+		IR wavenumber (cm⁻¹).
+	modes : tuple[int] or list[int]
+		Mode indices to compute.
+	epsilon_minus : float, optional
+		Substrate dielectric constant.
+	hbn_type : int, optional
+		hBN type (10 or 11).
+
+	Returns
+	-------
+	radii : list[float]
+		Radii in µm⁻¹ for each mode.
+	"""
+	new_freqs = np.array([freq_cm1])
+	radii = []
+	for m in modes:
+		kx = k_x_theoretical(
+			thickness, m, new_freqs,
+			epsilon_minus=epsilon_minus,
+			hbn_type=hbn_type,
+			plot=False,
+		)
+		kx_um = np.real(kx) * 1e-6  # cycles/µm
+		radii.append(float(kx_um[0]))
+	return radii
+
+def plot_kx_circles(ax, thickness, freq_cm1, modes=(0,1), epsilon_minus=2.3,
+					hbn_type=10, n_theta=500, colors=None, labels=None,
+					plot_2k_mode=False):
+	"""
+	Overlay theoretical k_x mode circles on an existing axis.
+	Returns radii and labels for legend handling.
+	"""
+	if colors is None:
+		default_colors = ["red", "orange", "cyan", "magenta", "lime"]
+		colors = [default_colors[i % len(default_colors)] for i in range(len(modes))]
+	if labels is None:
+		labels = [f"{m} mode" for m in modes]
+
+	# --- Compute radii separately ---
+	radii = compute_kx_radii(thickness, freq_cm1, modes, epsilon_minus, hbn_type)
+
+	theta = np.linspace(0, 2*np.pi, n_theta)
+
+	for r, color, label in zip(radii, colors, labels):
+		x_circle = r * np.cos(theta)
+		y_circle = r * np.sin(theta)
+		ax.plot(x_circle, y_circle, "-", color=color, linewidth=2, label=label)
+		if plot_2k_mode:
+			ax.plot(2*x_circle, 2*y_circle, "--", color=color, linewidth=2, label=f"2k {label}")
+
+	return radii, labels
+
+def lattice_cste(peaks, plot=False):
+	# 1) Unique pairwise distances
+	def unique_axis_distances(points):
+		X = points[:, 0]
+		Y = points[:, 1]
+		dx = X[None, :] - X[:, None]
+		dy = Y[None, :] - Y[:, None]
+		i, j = np.triu_indices(len(points), k=1)
+		return dx[i, j], dy[i, j]
+
+	# 2) Histogram + raw peaks
+	def histogram_peaks(distances, bins_nb=100, prominence=20, plot=False, label=""):
+		fig, ax = plt.subplots(figsize=(6,4))
+		n, bins, patches = ax.hist(distances, bins=bins_nb, color='steelblue', edgecolor='black')
+
+		peak_idx, _ = find_peaks(n, prominence=prominence)
+		peak_pos = 0.5 * (bins[peak_idx] + bins[peak_idx+1])
+
+		for idx in peak_idx:
+			patches[idx].set_edgecolor('red')
+
+		ax.set_title(f"Histogram peaks ({label})")
+		ax.set_xlabel("Distance")
+		ax.set_ylabel("Count")
+
+		if plot:
+			plt.tight_layout()
+			plt.show()
+		else:
+			plt.close(fig)
+
+		return np.sort(peak_pos)
+
+	# 3) Merge double peaks
+	def merge_close_peaks(positions, tol_factor=0.4):
+		if len(positions) < 2:
+			return positions
+
+		spacings = np.diff(positions)
+		median_spacing = np.median(spacings) if len(spacings) > 0 else 0
+		tol = tol_factor * median_spacing if median_spacing > 0 else 0
+
+		merged = [positions[0]]
+		for p in positions[1:]:
+			if abs(p - merged[-1]) < tol:
+				merged[-1] = 0.5 * (merged[-1] + p)
+			else:
+				merged.append(p)
+
+		return np.array(merged)
+	
+	# 4) Detect missing harmonics
+	def correct_missing_harmonics(positions):
+		"""
+		Detect large gaps and shift indices above the gap by +1.
+		"""
+		if len(positions) < 3:
+			return np.arange(len(positions))
+
+		spacings = np.diff(positions)
+		median_spacing = np.median(spacings)
+
+		# A missing harmonic creates a spacing ≈ 2× the median
+		missing = np.where(spacings > 1.5 * median_spacing)[0]
+
+		idx = np.arange(len(positions))
+
+		if len(missing) == 0:
+			return idx
+
+		# Only handle the first missing harmonic (simple, robust)
+		gap = missing[0]
+
+		# Shift all indices above the gap by +1
+		idx[gap+1:] += 1
+
+		return idx
+
+	# 5) Fit harmonic index → position
+	def estimate_period(dist, label=""):
+		raw_peaks = histogram_peaks(dist, plot=plot, label=label)
+		merged_peaks = merge_close_peaks(raw_peaks)
+
+		if len(merged_peaks) < 2:
+			return np.nan, np.nan
+
+		# Assign indices with missing-peak correction
+		indices = correct_missing_harmonics(merged_peaks)
+
+		x = indices
+		y = merged_peaks
+
+		slope, intercept, r, p, stderr = linregress(x, y)
+
+		# Diagnostic plot
+		if plot:
+			fig, ax = plt.subplots(figsize=(6,4))
+			ax.scatter(x, y, color='blue', label='Peaks')
+			xx = np.linspace(x.min(), x.max(), 200)
+			ax.plot(xx, intercept + slope*xx, color='red', label=f'Fit, slope = {slope:.3f}')
+			ax.set_title(f"Linear fit ({label})")
+			ax.set_xlabel("Harmonic index (corrected)")
+			ax.set_ylabel("Peak position")
+			ax.legend()
+			plt.tight_layout()
+			plt.show()
+
+		return slope, stderr
+
+	# 6) Apply to x and y axes
+
+	dist_x, dist_y = unique_axis_distances(peaks)
+
+	lattice_x, err_x = estimate_period(dist_x, label="x")
+	lattice_y, err_y = estimate_period(dist_y, label="y")
+
+	return {
+		"xaxis": [lattice_x, err_x],
+		"yaxis": [lattice_y, err_y]
+	}
+
+## Masks for FFT filtering
+
+def single_gaussian(shape, sigma, center=(0.0, 0.0), dx=1.0, dy=1.0):
+	"""
+	Gaussian spot in reciprocal space, defined in physical units.
+	"""
+	ny, nx = shape
+	qx_max = 1 / (2 * dx)
+	qy_max = 1 / (2 * dy)
+	qx = np.linspace(-qx_max, qx_max, nx)
+	qy = np.linspace(-qy_max, qy_max, ny)
+	Qy, Qx = np.meshgrid(qy, qx, indexing="ij")
+
+	r2 = (Qx - center[0])**2 + (Qy - center[1])**2
+	mask = np.exp(-r2 / (2 * sigma**2))
+	return mask
+
+def gaussian_spots_filter(shape, coords, sigma, dx=1.0, dy=1.0):
+	"""
+	Sum of Gaussian spots at given reciprocal-space coordinates.
+	"""
+	mask = np.zeros(shape)
+	for alpha in coords:
+		mask += single_gaussian(shape, sigma, center=alpha, dx=dx, dy=dy)
+	return mask
+
+def gaussian_ring(shape, radius, sigma, dx=1.0, dy=1.0):
+	"""
+	Gaussian ring in reciprocal space, defined in physical units.
+	"""
+	ny, nx = shape
+	qx_max = 1 / (2 * dx)
+	qy_max = 1 / (2 * dy)
+	qx = np.linspace(-qx_max, qx_max, nx)
+	qy = np.linspace(-qy_max, qy_max, ny)
+	Qy, Qx = np.meshgrid(qy, qx, indexing="ij")
+
+	dist = np.sqrt(Qx**2 + Qy**2)
+	mask = np.exp(-((dist - radius)**2) / (2 * sigma**2))
+	return mask
+
+def gaussian_ringss_filter(shape, radiuss, sigma, dx=1.0, dy=1.0):
+	"""
+	Sum of Gaussian spots at given reciprocal-space coordinates.
+	"""
+	mask = np.zeros(shape)
+	for alpha in radiuss:
+		mask += gaussian_ring(shape, alpha, sigma, dx=dx, dy=dy)
+	return mask
+
+def lattice_spot_grid_filter(shape, peaks, sigma, interval_x, interval_y,  plot=False, dx = 1.0, dy = 1.0):
+	# def min_pairwise_distance(points):
+	#     """
+	#     Compute the smallest Euclidean distance between all pairs of points.
+	#     """
+	#     # Compute pairwise differences using broadcasting
+	#     diff = points[:, None, :] - points[None, :, :]
+		
+	#     # Compute squared distances
+	#     dist_sq = np.sum(diff**2, axis=-1)
+		
+	#     # Remove zero distances on the diagonal
+	#     np.fill_diagonal(dist_sq, np.inf)
+		
+	#     # Return the minimum distance
+	#     return np.sqrt(np.min(dist_sq))
+
+	def closest_to_origin(coords):
+		coords = np.asarray(coords)
+		d2 = coords[:,0]**2 + coords[:,1]**2
+		return coords[np.argmin(d2)]
+
+	def symmetric_grid(center, dx, dy, interval_x, interval_y):
+		"""
+		center     : (cx, cy)
+		dx, dy     : spacing in x and y
+		interval_x : half-width to cover in x direction
+		interval_y : half-height to cover in y direction
+		"""
+		cx, cy = center
+
+		# Number of steps needed to cover the interval
+		Nx = int(np.ceil(interval_x / dx))
+		Ny = int(np.ceil(interval_y / dy))
+
+		# Generate symmetric coordinate vectors
+		xs = cx + dx * np.arange(-Nx, Nx + 1)
+		ys = cy + dy * np.arange(-Ny, Ny + 1)
+
+		# Build full grid
+		grid_x, grid_y = np.meshgrid(xs, ys)
+		points = np.column_stack([grid_x.ravel(), grid_y.ravel()])
+
+		return points
+
+	lattice_constants = lattice_cste(peaks, plot)
+	# minpd = min_pairwise_distance(peaks)
+	# print(minpd)
+	
+	closest = closest_to_origin(peaks)
+
+	pts = symmetric_grid(closest, lattice_constants["xaxis"][0], lattice_constants["yaxis"][0], interval_x, interval_y)
+	# pts = symmetric_grid(closest, minpd, minpd, interval_x, interval_y)
+
+	mask = gaussian_spots_filter(shape, pts, sigma, dx=dx, dy = dy)
+
+	return mask
 
 # --------------------------------------------- TEST CODE --------------------------------------------- #
 
