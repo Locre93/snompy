@@ -992,32 +992,44 @@ class snom():
 
 		return coords_array
 	
-	def rotation(self, load: bool, save: bool, coordinates = None, path = ".\\Analysis Output\\"):
-		# The rotation is performed by select two coordinates that identify a line.
-		# This line will be aligned to the horizontal axis.
+	def rotation(self, load: bool, save: bool, coordinates=None, path="Analysis Output"):
+		rotation_dir = os.path.join(path, "Rotation")
+		rotation_file = os.path.join(rotation_dir, f"{self.folder}.txt")
 
-		coordinates = np.loadtxt(path + "Rotation\\" + self.folder + ".txt", delimiter=',') if load else coordinates
+		if load:
+			coordinates = np.loadtxt(rotation_file, delimiter=',')
+		else:
+			coordinates = coordinates
 
 		if coordinates is None:
-			coordinates = self.extract_coordinates(i=2,pixel=False)
-			formatted_coordinates = np.array2string(coordinates, precision=8, separator=',', suppress_small=True, max_line_width=np.inf)
+			coordinates = self.extract_coordinates(i=2, pixel=False)
+			formatted_coordinates = np.array2string(
+				coordinates,
+				precision=8,
+				separator=',',
+				suppress_small=True,
+				max_line_width=np.inf
+			)
 			print(f"The extracted coordinates to calculate the rotation are: {formatted_coordinates}")
 
 		if save:
-			os.makedirs(path + "Rotation\\") if not os.path.exists(path + "Center\\") else None 
-			np.savetxt(path + "Rotation\\" + self.folder + ".txt", coordinates, delimiter=',', fmt='%.8f') 
+			# Ensure directory exists
+			os.makedirs(rotation_dir, exist_ok=True)
+			np.savetxt(rotation_file, coordinates, delimiter=',', fmt='%.8f')
 
 		# Angle extraction
-		angle = np.arctan((coordinates[1,1]-coordinates[0,1]) / (coordinates[1,0]-coordinates[0,0]))*180/np.pi
+		dx = coordinates[1, 0] - coordinates[0, 0]
+		dy = coordinates[1, 1] - coordinates[0, 1]
+		angle = np.arctan2(dy, dx) * 180 / np.pi  # safer than plain division
 
 		# Scan rotation
-		Real_part = rotate(np.real(self.map), angle, reshape=False)
-		Imag_part = rotate(np.imag(self.map), angle, reshape=False)
+		real_part = rotate(np.real(self.map), angle, reshape=False)
+		imag_part = rotate(np.imag(self.map), angle, reshape=False)
 
 		# Update the class instance
-		self.map = Real_part + 1j*Imag_part
+		self.map = real_part + 1j * imag_part
 
-		return self
+		return self 
 	
 	def rectangle_cut(self, Lx, Ly, load: bool, save: bool, coordinates = None, path = ".\\Analysis Output\\"):
 
