@@ -1031,23 +1031,38 @@ class snom():
 
 		return self 
 	
-	def rectangle_cut(self, Lx, Ly, load: bool, save: bool, coordinates = None, path = ".\\Analysis Output\\"):
+	def rectangle_cut(self, Lx, Ly, load: bool, save: bool, coordinates=None, path="Analysis Output"):
+		dx = int(Lx / (self.x[1] - self.x[0]))
+		dy = int(Ly / (self.y[1] - self.y[0]))
 
-		dx = int(Lx/(self.x[1]-self.x[0]))
-		dy = int(Ly/(self.y[1]-self.y[0]))
+		center_dir = os.path.join(path, "Center")
+		center_file = os.path.join(center_dir, f"{self.folder}.txt")
 
-		coordinates = np.loadtxt(path + "Center\\" + self.folder + ".txt", delimiter=',', dtype=int).reshape(1, 2) if load else coordinates
+		if load:
+			coordinates = np.loadtxt(center_file, delimiter=',', dtype=int).reshape(1, 2)
+		else:
+			coordinates = coordinates
 
 		if coordinates is None:
-			coordinates = self.extract_coordinates(i=1,pixel=True)
-			formatted_coordinates = np.array2string(coordinates, precision=8, separator=',', suppress_small=True, max_line_width=np.inf)
+			coordinates = self.extract_coordinates(i=1, pixel=True)
+			formatted_coordinates = np.array2string(
+				coordinates,
+				precision=8,
+				separator=',',
+				suppress_small=True,
+				max_line_width=np.inf
+			)
 			print(f"The extracted coordinates of the unit cell center are: {formatted_coordinates}")
 
 		if save:
-			os.makedirs(path + "Center\\") if not os.path.exists(path + "Center\\") else None 
-			np.savetxt(path + "Center\\" + self.folder + ".txt", coordinates, delimiter=',', fmt='%d')
+			os.makedirs(center_dir, exist_ok=True)
+			np.savetxt(center_file, coordinates, delimiter=',', fmt='%d')
 
-		self.cut(x_range=[coordinates[0,0]-dx//2,coordinates[0,0]+dx//2],y_range=[coordinates[0,1]-dy//2,coordinates[0,1]+dy//2],y_reset=True)
+		self.cut(
+			x_range=[coordinates[0, 0] - dx // 2, coordinates[0, 0] + dx // 2],
+			y_range=[coordinates[0, 1] - dy // 2, coordinates[0, 1] + dy // 2],
+			y_reset=True
+		)
 
 		return self
 	
