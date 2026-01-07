@@ -702,7 +702,7 @@ class snom():
 		self.map = np.fft.fft(np.abs(self.map), axis = 1)
 		self.map = abs(np.fft.fftshift(self.map,axes=1))
 
-		self.x = np.linspace(-q_max,q_max,np.shape(self.map)[1])
+		self.x = np.linspace(-q_max,q_max,np.shape(self.map)[1]) # spatial frequency in cycles/length (e.g., μm^-1)
 		self.X,_ = np.meshgrid(self.x,self.y)
 
 		self.fft_flag = True
