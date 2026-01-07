@@ -31,6 +31,7 @@ Clone the repository:
 ```bash
 git clone <repository_url>
 cd snompy
+```
 
 ## License
 
