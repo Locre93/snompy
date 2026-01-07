@@ -973,15 +973,24 @@ class snom():
 
 		return self
 	
-	def extract_coordinates(self, i ,pixel):
-
+	def extract_coordinates(self, i, pixel, save_path=None):
+		"""
+		Select points from a plot.
+		i: number of points
+		pixel: True=int coords, False=float
+		save_path: optional file to save coords
+		"""
 		self.plot(pixel=pixel, show=False)
-
-		plt.title(f'Select {i} points from the plot')
+		plt.title(f'Select {i} points')
 		coordinates = plt.ginput(i, timeout=-1)
 		plt.close()
 
-		return np.array(coordinates, dtype=int) if pixel else np.array(coordinates, dtype=float)
+		coords_array = np.array(coordinates, dtype=int if pixel else float)
+
+		if save_path:
+			np.savetxt(save_path, coords_array, fmt='%d' if pixel else '%.6f')
+
+		return coords_array
 	
 	def rotation(self, load: bool, save: bool, coordinates = None, path = ".\\Analysis Output\\"):
 		# The rotation is performed by select two coordinates that identify a line.
